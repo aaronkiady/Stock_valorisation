@@ -1,0 +1,4 @@
+numero_fiche;reference_odoo;chantier_code;article_reference_interne;unite;quantite_initiale
+1001;REF-ODOO-001;CH-001;ART-0001;unité;120.50
+1002;REF-ODOO-002;CH-002;ART-0002;sac;35
+1003;;CH-001;ART-0003;;0

@@ -1,0 +1,29 @@
+# Core Flask
+flask==2.3.3
+werkzeug==2.3.7
+jinja2==3.1.6
+itsdangerous==2.2.0
+click==8.1.7
+
+# Database
+flask-sqlalchemy==3.1.1
+sqlalchemy==2.0.23
+pymysql==1.1.0
+greenlet==3.0.3
+
+# Authentication & Security
+flask-jwt-extended==4.5.3
+pyjwt==2.8.0
+
+# CORS
+flask-cors==4.0.0
+
+# Environment
+python-dotenv==1.0.0
+
+# Utilities
+typing-extensions==4.8.0
+blinker==1.9.0
+
+# Export Excel
+openpyxl==3.1.5
