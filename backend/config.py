@@ -46,9 +46,9 @@ class Config:
     # ==================================================================
     
     # Clés secrètes pour la production
-    SECRET_KEY = 'AdminfOti2025!-secret-key-production'
-    JWT_SECRET_KEY = 'AdminfOti2025!-jwt-secret-production'
-    
+    SECRET_KEY = 'adminfoti2025-secret-key-production'
+    JWT_SECRET_KEY = 'adminfoti2025jwtsecretproduction'
+
     # Durée de validité du token JWT
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     

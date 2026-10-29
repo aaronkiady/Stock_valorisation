@@ -41,7 +41,7 @@ const UserManagement: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await fetch('http://192.168.2.15:5880/api/users', {
+      const response = await fetch('http://localhost:5880/api/users', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -90,8 +90,8 @@ const UserManagement: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const url = editingId
-        ? `http://192.168.2.15:5880/api/users/${editingId}`
-        : 'http://192.168.2.15:5880/api/users';
+        ? `http://localhost:5880/api/users/${editingId}`
+        : 'http://localhost:5880/api/users';
 
       const method = editingId ? 'PUT' : 'POST';
 
@@ -146,7 +146,7 @@ const UserManagement: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://192.168.2.15:5880/api/users/${id}`, {
+      const response = await fetch(`http://localhost:5880/api/users/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`

@@ -57,7 +57,7 @@ const AuditLog: React.FC = () => {
       if (filterTable) params.append('table_name', filterTable);
 
       // CORRECTION : Route /api/audit-logs
-      const response = await fetch(`http://192.168.2.15:5880/api/audit-logs?${params}`, {
+      const response = await fetch(`http://localhost:5880/api/audit-logs?${params}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'

@@ -2,6 +2,7 @@
  * Composant App - Point d'entrée principal de l'application
  * Version COMPLÈTE avec toutes les fonctionnalités
  * ✅ Menus et routes filtrés selon le rôle (admin / RespStock / user)
+ * ✅ Profil utilisateur accessible via la sidebar
  */
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -15,6 +16,7 @@ import Mouvements from './components/Mouvements';
 import ArticleManagement from './components/ArticleManagement';
 import ChantierManagement from './components/ChantierManagement';
 import UserManagement from './components/UserManagement';
+import Profile from './components/Profile';
 import { canAccessMenu, defaultPathForRole, MenuId } from './roles';
 import { 
   LayoutDashboard, 
@@ -26,7 +28,8 @@ import {
   LogOut,
   Box,
   Building2,
-  Users
+  Users,
+  User // ✅ Icône ajoutée pour le profil
 } from 'lucide-react';
 
 /**
@@ -105,8 +108,13 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         </nav>
 
         {/* Profil utilisateur */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
-          <div className="flex items-center mb-3">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t bg-white">
+          {/* ✅ BLOC CLIQUABLE POUR ACCÉDER AU PROFIL */}
+          <button
+            onClick={() => navigate('/profile')}
+            className="w-full flex items-center mb-3 p-2 -mx-2 rounded-lg hover:bg-gray-100 transition-colors text-left"
+            title="Modifier mon compte"
+          >
             <div className="flex-shrink-0 w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
               <span className="text-blue-600 font-semibold text-sm">
                 {user?.full_name?.charAt(0).toUpperCase() || 'U'}
@@ -118,7 +126,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               </p>
               <p className="text-xs text-gray-500 truncate">{user?.email}</p>
             </div>
-          </div>
+          </button>
+
           <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -250,6 +259,18 @@ const App: React.FC = () => {
                 </Layout>
               </ProtectedRoute>
             }
+          />
+
+          {/* ✅ ROUTE PROFIL AVEC LAYOUT (pour garder la sidebar) */}
+          <Route 
+            path="/profile" 
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Profile />
+                </Layout>
+              </ProtectedRoute>
+            } 
           />
 
           {/* Redirection par défaut selon le rôle */}

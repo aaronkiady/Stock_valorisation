@@ -44,6 +44,7 @@ export interface Stock {
   unite?: string;
   statut: string;
   created_at?: string;
+  prix_unitaire?: number;
   
   prix_total?: number;
   
@@ -62,7 +63,8 @@ export interface Mouvement {
   article_id: number;
   entree?: number;
   sortie?: number;
-  type_mouvement: 'ENTREE' | 'SORTIE';  // ✅ AJOUT de cette ligne
+  prix_unitaire?: number;
+  type_mouvement: 'ENTREE' | 'SORTIE';
   commentaire?: string;
   created_at?: string;
   utilisateur?: string;
@@ -152,6 +154,7 @@ export interface StockFormData {
   article_id: number;
   unite?: string;
   quantite_initiale: number;
+  prix_unitaire?: number;
   stock_initial?: number;
 }
 
@@ -163,6 +166,7 @@ export interface MouvementFormData {
   article_id: number;
   entree?: number;
   sortie?: number;
+  prix_unitaire?: number;
   commentaire?: string;
 }
 
@@ -210,4 +214,14 @@ export interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+}
+
+// ==================== TYPES POUR LE PROFIL ====================
+
+export interface ProfileFormData {
+  username?: string;
+  email?: string;
+  full_name?: string;
+  password?: string;
+  confirm_password?: string;
 }

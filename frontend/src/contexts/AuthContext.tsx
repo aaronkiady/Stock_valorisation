@@ -21,6 +21,7 @@ interface AuthContextType {
   isRespStock: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  updateUser: (updateUser: User) => void;
   loading: boolean;
 }
 
@@ -50,8 +51,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     
     if (process.env.NODE_ENV === 'development') {
       const { hostname } = window.location;
-      return hostname === 'localhost' || hostname === '192.168.2.15' 
-        ? 'http://192.168.2.15:5880/api'
+      return hostname === 'localhost' //|| hostname === '192.168.2.15' 
+        ? 'http://localhost:5880/api'
         : `http://${hostname}:5880/api`;
     }
     
@@ -169,6 +170,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser(null);
   };
 
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
   const value: AuthContextType = {
     user,
     isAuthenticated: !!user,
@@ -176,6 +182,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isRespStock: user?.role === 'RespStock',
     login,
     logout,
+    updateUser,
     loading,
   };
 

@@ -64,7 +64,7 @@ class Article(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     reference_interne = db.Column(db.String(50), unique=True, nullable=False, index=True)
     nom = db.Column(db.String(255), nullable=False)
-    cout = db.Column(db.Numeric(12, 2), default=0.0)
+    cout = db.Column(db.Numeric(12, 2), default=0.0)  # Ce champ devient le CMUP calculé
     responsable = db.Column(db.String(100))
     unite_mesure = db.Column(db.String(50), default='unité')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -74,6 +74,35 @@ class Article(db.Model):
     stocks = db.relationship('Stock', back_populates='article', lazy='dynamic')
     mouvements = db.relationship('Mouvement', back_populates='article', lazy='dynamic')
     
+    def recalculer_cmup(self):
+        """
+        Calcule le Coût Moyen Unitaire Pondéré (CMUP) de l'article.
+        Formule : (Valeur Stock Initial + Valeur Entrées) / (Qté Stock Initial + Qté Entrées)
+        """
+        # 1. Calculer la valeur et quantité totale des stocks initiaux pour cet article
+        stocks = Stock.query.filter_by(article_id=self.id).all()
+        
+        qte_initiale_totale = sum(float(s.quantite_initiale or 0) for s in stocks)
+        valeur_initiale_totale = sum(float(s.quantite_initiale or 0) * float(s.prix_unitaire or 0) for s in stocks)
+        
+        # 2. Calculer la valeur et quantité totale des entrées (mouvements)
+        mouvements_entree = Mouvement.query.filter(
+            Mouvement.article_id == self.id,
+            Mouvement.entree > 0
+        ).all()
+        
+        qte_entrees = sum(float(m.entree) for m in mouvements_entree)
+        valeur_entrees = sum(float(m.entree) * float(m.prix_unitaire) for m in mouvements_entree)
+
+        # 3. Appliquer la formule
+        qte_totale = qte_initiale_totale + qte_entrees
+        valeur_totale = valeur_initiale_totale + valeur_entrees
+
+        if qte_totale > 0:
+            self.cout = valeur_totale / qte_totale
+        else:
+            self.cout = 0.0
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -133,11 +162,11 @@ class Stock(db.Model):
     unite = db.Column(db.String(50))
     quantite_initiale = db.Column(db.Numeric(12, 2), default=0.0)
     
-    # Champs calculés automatiquement par les triggers MySQL
+    # Champs calculés
     entree = db.Column(db.Numeric(12, 2), default=0.0)
     sortie = db.Column(db.Numeric(12, 2), default=0.0)
     quantite_finale = db.Column(db.Numeric(12, 2), default=0.0)
-    prix_unitaire = db.Column(db.Numeric(12, 2), default=0.0)
+    prix_unitaire = db.Column(db.Numeric(12, 2), default=0.0) # Prix initial ou CMUP actuel du stock
     prix_total = db.Column(db.Numeric(15, 2), default=0.0)
     statut = db.Column(db.String(50), default='Stock Normal')
     
@@ -150,12 +179,7 @@ class Stock(db.Model):
     mouvements = db.relationship('Mouvement', back_populates='stock', lazy='dynamic')
     
     def recalculer_stock(self):
-        """
-        Recalculer les totaux du stock
-        Note : Avec MySQL, les triggers font ce calcul automatiquement
-        Cette méthode est conservée pour compatibilité et tests
-        """
-        # Calculer les totaux depuis les mouvements
+        """Recalculer les totaux du stock (quantités)"""
         total_entrees = db.session.query(
             func.coalesce(func.sum(Mouvement.entree), 0)
         ).filter(Mouvement.stock_id == self.id).scalar()
@@ -169,12 +193,6 @@ class Stock(db.Model):
         quantite_initiale = float(self.quantite_initiale) if self.quantite_initiale else 0.0
         self.quantite_finale = quantite_initiale + self.entree - self.sortie
         
-        # Récupérer le prix unitaire de l'article
-        if self.article:
-            self.prix_unitaire = float(self.article.cout)
-        
-        self.prix_total = float(self.quantite_finale) * float(self.prix_unitaire)
-        
         # Déterminer le statut
         if self.quantite_finale <= 0:
             self.statut = 'Rupture de stock'
@@ -185,6 +203,34 @@ class Stock(db.Model):
         else:
             self.statut = 'Stock Normal'
         
+        self.updated_at = datetime.utcnow()
+
+    def recalculer_prix_stock(self):
+        """
+        Recalcule le prix total de ce stock spécifique en fonction des mouvements.
+        (Valorisation au CMUP de l'article)
+        """
+        if not self.article:
+            return
+
+        # Valeur des entrées (au prix d'achat saisi)
+        entrees = Mouvement.query.filter_by(stock_id=self.id).filter(Mouvement.entree > 0).all()
+        valeur_entrees = sum(float(m.entree) * float(m.prix_unitaire or 0) for m in entrees)
+        
+        # Valeur des sorties (valorisées au CMUP actuel de l'article)
+        # On utilise self.article.cout qui a été mis à jour juste avant
+        sorties = Mouvement.query.filter_by(stock_id=self.id).filter(Mouvement.sortie > 0).all()
+        valeur_sorties = sum(float(m.sortie) * float(self.article.cout or 0) for m in sorties)
+
+        # Prix total du stock
+        self.prix_total = valeur_entrees - valeur_sorties
+        
+        # Mise à jour du prix unitaire moyen du stock
+        if self.quantite_finale > 0:
+            self.prix_unitaire = self.prix_total / float(self.quantite_finale)
+        else:
+            self.prix_unitaire = 0
+            
         self.updated_at = datetime.utcnow()
     
     def to_dict(self, include_article=True, include_chantier=True):
@@ -231,6 +277,7 @@ class Mouvement(db.Model):
     article_id = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=False, index=True)
     entree = db.Column(db.Numeric(12, 2))
     sortie = db.Column(db.Numeric(12, 2))
+    prix_unitaire = db.Column(db.Numeric(12, 2), nullable=False) # ✅ OBLIGATOIRE
     type_mouvement = db.Column(db.String(20))
     utilisateur = db.Column(db.String(100))
     commentaire = db.Column(db.Text)
@@ -257,6 +304,7 @@ class Mouvement(db.Model):
             'article_id': self.article_id,
             'entree': float(self.entree) if self.entree else None,
             'sortie': float(self.sortie) if self.sortie else None,
+            'prix_unitaire': float(self.prix_unitaire) if self.prix_unitaire else 0.0, # ✅ Ajout
             'type_mouvement': self.type_mouvement,
             'utilisateur': self.utilisateur,
             'commentaire': self.commentaire,
@@ -332,7 +380,6 @@ def log_audit(utilisateur, action, table_name, record_id, old_values=None, new_v
 def get_stock_statistics():
     """Récupérer les statistiques des stocks"""
     try:
-        # Utiliser la vue MySQL si disponible
         result = db.session.execute(text("""
             SELECT 
                 COUNT(*) as total,

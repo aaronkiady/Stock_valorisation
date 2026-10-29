@@ -16,7 +16,8 @@ import {
   StockFormData,
   MouvementFormData,
   ChantierFormData,
-  SearchFilters
+  SearchFilters,
+  ProfileFormData
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -492,6 +493,24 @@ export interface AuthResponse {
     role: 'admin' | 'RespStock' | 'user';
   };
 }
+
+export const profileApi = {
+  get: async (): Promise<UserData> => {
+    const response = await fetch(`${API_BASE_URL}/profile`, {
+      headers: getHeaders()
+    });
+    return handleResponse<UserData>(response);
+  },
+
+  update: async (data: Partial<ProfileFormData>): Promise<UserData> => {
+    const response = await fetch(`${API_BASE_URL}/profile`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(data)
+    });
+    return handleResponse<UserData>(response);
+  }
+};
 
 export const authApi = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {

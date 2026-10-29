@@ -10,6 +10,7 @@ flask-sqlalchemy==3.1.1
 sqlalchemy==2.0.23
 pymysql==1.1.0
 greenlet==3.0.3
+Flask-Migrate
 
 # Authentication & Security
 flask-jwt-extended==4.5.3
