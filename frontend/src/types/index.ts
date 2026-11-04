@@ -1,6 +1,6 @@
 /**
  * Types TypeScript pour l'application de gestion de stock
- * ✅ CORRECTION : Ajout de type_mouvement dans Mouvement
+ * ✅ Ajout des champs de validation et PJ
  */
 
 // ==================== TYPES DE BASE ====================
@@ -45,15 +45,21 @@ export interface Stock {
   statut: string;
   created_at?: string;
   prix_unitaire?: number;
-  
   prix_total?: number;
+  
+  // ✅ NOUVEAUX CHAMPS
+  date_inventaire?: string;
+  reference_document?: string;
+  fichier_pj?: string;
+  statut_validation: 'Brouillon' | 'Validé';
+  date_validation?: string;
+  validateur?: User;
   
   // Relations
   chantier?: Chantier;
   article?: Article;
 }
 
-// ✅ CORRECTION : Ajout de type_mouvement
 export interface Mouvement {
   id: number;
   date: string;
@@ -69,6 +75,13 @@ export interface Mouvement {
   created_at?: string;
   utilisateur?: string;
   
+  // ✅ NOUVEAUX CHAMPS
+  date_saisie?: string;
+  fichier_pj?: string;
+  statut_validation: 'Brouillon' | 'Validé';
+  date_validation?: string;
+  validateur?: User;
+  
   // Relations
   chantier?: Chantier;
   stock?: Stock;
@@ -80,7 +93,7 @@ export interface AuditLog {
   id: number;
   table_name: string;
   record_id: number;
-  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'CREATE' | 'VALIDATE' | 'IMPORT';
   old_values?: Record<string, any>;
   new_values?: Record<string, any>;
   utilisateur: string;
@@ -103,6 +116,11 @@ export interface DashboardStats {
     total_entrees: number;
     total_sorties: number;
     total_mouvements: number;
+  };
+  // ✅ NOUVEAU
+  validation?: {
+    stocks_brouillon: number;
+    mouvements_brouillon: number;
   };
 }
 
@@ -155,7 +173,10 @@ export interface StockFormData {
   unite?: string;
   quantite_initiale: number;
   prix_unitaire?: number;
-  stock_initial?: number;
+  // ✅ NOUVEAUX CHAMPS
+  date_inventaire?: string;
+  reference_document?: string;
+  fichier_pj?: string;
 }
 
 export interface MouvementFormData {
@@ -168,6 +189,24 @@ export interface MouvementFormData {
   sortie?: number;
   prix_unitaire?: number;
   commentaire?: string;
+  // ✅ NOUVEAUX CHAMPS
+  fichier_pj?: string;
+}
+
+// ✅ NOUVEAU : Pour la saisie groupée
+export interface MouvementBatchData {
+  date: string;
+  numero_bs_br_cj: string;
+  fichier_pj?: string;
+  commentaire?: string;
+  mouvements: {
+    stock_id: number;
+    article_id: number;
+    chantier_id?: number;
+    entree?: number;
+    sortie?: number;
+    prix_unitaire: number;
+  }[];
 }
 
 export interface ChantierFormData {
@@ -181,6 +220,7 @@ export interface ChantierFormData {
 export interface SearchFilters {
   search?: string;
   statut?: string;
+  statut_validation?: string;
   chantier_id?: number;
   stock_id?: number;
   article_id?: number;

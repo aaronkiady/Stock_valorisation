@@ -64,37 +64,32 @@ class Article(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     reference_interne = db.Column(db.String(50), unique=True, nullable=False, index=True)
     nom = db.Column(db.String(255), nullable=False)
-    cout = db.Column(db.Numeric(12, 2), default=0.0)  # Ce champ devient le CMUP calculé
+    cout = db.Column(db.Numeric(12, 2), default=0.0)
     responsable = db.Column(db.String(100))
     unite_mesure = db.Column(db.String(50), default='unité')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relations
     stocks = db.relationship('Stock', back_populates='article', lazy='dynamic')
     mouvements = db.relationship('Mouvement', back_populates='article', lazy='dynamic')
     
     def recalculer_cmup(self):
-        """
-        Calcule le Coût Moyen Unitaire Pondéré (CMUP) de l'article.
-        Formule : (Valeur Stock Initial + Valeur Entrées) / (Qté Stock Initial + Qté Entrées)
-        """
-        # 1. Calculer la valeur et quantité totale des stocks initiaux pour cet article
+        """Calcule le Coût Moyen Unitaire Pondéré (CMUP)"""
         stocks = Stock.query.filter_by(article_id=self.id).all()
         
         qte_initiale_totale = sum(float(s.quantite_initiale or 0) for s in stocks)
         valeur_initiale_totale = sum(float(s.quantite_initiale or 0) * float(s.prix_unitaire or 0) for s in stocks)
         
-        # 2. Calculer la valeur et quantité totale des entrées (mouvements)
+        # On ne prend en compte que les mouvements VALIDÉS
         mouvements_entree = Mouvement.query.filter(
             Mouvement.article_id == self.id,
-            Mouvement.entree > 0
+            Mouvement.entree > 0,
+            Mouvement.statut_validation == 'Validé'
         ).all()
         
         qte_entrees = sum(float(m.entree) for m in mouvements_entree)
         valeur_entrees = sum(float(m.entree) * float(m.prix_unitaire) for m in mouvements_entree)
 
-        # 3. Appliquer la formule
         qte_totale = qte_initiale_totale + qte_entrees
         valeur_totale = valeur_initiale_totale + valeur_entrees
 
@@ -131,7 +126,6 @@ class Chantier(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relations
     stocks = db.relationship('Stock', back_populates='chantier', lazy='dynamic')
     mouvements = db.relationship('Mouvement', back_populates='chantier', lazy='dynamic')
     
@@ -166,9 +160,17 @@ class Stock(db.Model):
     entree = db.Column(db.Numeric(12, 2), default=0.0)
     sortie = db.Column(db.Numeric(12, 2), default=0.0)
     quantite_finale = db.Column(db.Numeric(12, 2), default=0.0)
-    prix_unitaire = db.Column(db.Numeric(12, 2), default=0.0) # Prix initial ou CMUP actuel du stock
+    prix_unitaire = db.Column(db.Numeric(12, 2), default=0.0)
     prix_total = db.Column(db.Numeric(15, 2), default=0.0)
     statut = db.Column(db.String(50), default='Stock Normal')
+    
+    # ✅ NOUVEAUX CHAMPS (cahier des charges)
+    date_inventaire = db.Column(db.Date, nullable=True)
+    reference_document = db.Column(db.String(100), nullable=True)
+    fichier_pj = db.Column(db.String(255), nullable=True)
+    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)  # Brouillon | Validé
+    validateur_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    date_validation = db.Column(db.DateTime, nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -177,23 +179,29 @@ class Stock(db.Model):
     chantier = db.relationship('Chantier', back_populates='stocks')
     article = db.relationship('Article', back_populates='stocks')
     mouvements = db.relationship('Mouvement', back_populates='stock', lazy='dynamic')
+    validateur = db.relationship('User', foreign_keys=[validateur_id])
     
     def recalculer_stock(self):
-        """Recalculer les totaux du stock (quantités)"""
+        """Recalculer les totaux du stock (quantités) - UNIQUEMENT mouvements validés"""
         total_entrees = db.session.query(
             func.coalesce(func.sum(Mouvement.entree), 0)
-        ).filter(Mouvement.stock_id == self.id).scalar()
+        ).filter(
+            Mouvement.stock_id == self.id,
+            Mouvement.statut_validation == 'Validé'
+        ).scalar()
         
         total_sorties = db.session.query(
             func.coalesce(func.sum(Mouvement.sortie), 0)
-        ).filter(Mouvement.stock_id == self.id).scalar()
+        ).filter(
+            Mouvement.stock_id == self.id,
+            Mouvement.statut_validation == 'Validé'
+        ).scalar()
         
         self.entree = float(total_entrees) if total_entrees else 0.0
         self.sortie = float(total_sorties) if total_sorties else 0.0
         quantite_initiale = float(self.quantite_initiale) if self.quantite_initiale else 0.0
         self.quantite_finale = quantite_initiale + self.entree - self.sortie
         
-        # Déterminer le statut
         if self.quantite_finale <= 0:
             self.statut = 'Rupture de stock'
         elif self.quantite_finale <= 5:
@@ -206,26 +214,22 @@ class Stock(db.Model):
         self.updated_at = datetime.utcnow()
 
     def recalculer_prix_stock(self):
-        """
-        Recalcule le prix total de ce stock spécifique en fonction des mouvements.
-        (Valorisation au CMUP de l'article)
-        """
+        """Recalcule le prix total du stock - UNIQUEMENT mouvements validés"""
         if not self.article:
             return
 
-        # Valeur des entrées (au prix d'achat saisi)
-        entrees = Mouvement.query.filter_by(stock_id=self.id).filter(Mouvement.entree > 0).all()
+        entrees = Mouvement.query.filter_by(
+            stock_id=self.id, statut_validation='Validé'
+        ).filter(Mouvement.entree > 0).all()
         valeur_entrees = sum(float(m.entree) * float(m.prix_unitaire or 0) for m in entrees)
         
-        # Valeur des sorties (valorisées au CMUP actuel de l'article)
-        # On utilise self.article.cout qui a été mis à jour juste avant
-        sorties = Mouvement.query.filter_by(stock_id=self.id).filter(Mouvement.sortie > 0).all()
+        sorties = Mouvement.query.filter_by(
+            stock_id=self.id, statut_validation='Validé'
+        ).filter(Mouvement.sortie > 0).all()
         valeur_sorties = sum(float(m.sortie) * float(self.article.cout or 0) for m in sorties)
 
-        # Prix total du stock
         self.prix_total = valeur_entrees - valeur_sorties
         
-        # Mise à jour du prix unitaire moyen du stock
         if self.quantite_finale > 0:
             self.prix_unitaire = self.prix_total / float(self.quantite_finale)
         else:
@@ -248,6 +252,11 @@ class Stock(db.Model):
             'prix_unitaire': float(self.prix_unitaire) if self.prix_unitaire else 0.0,
             'prix_total': float(self.prix_total) if self.prix_total else 0.0,
             'statut': self.statut,
+            'date_inventaire': self.date_inventaire.isoformat() if self.date_inventaire else None,
+            'reference_document': self.reference_document,
+            'fichier_pj': self.fichier_pj,
+            'statut_validation': self.statut_validation,
+            'date_validation': self.date_validation.isoformat() if self.date_validation else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -257,6 +266,9 @@ class Stock(db.Model):
         
         if include_chantier and self.chantier:
             result['chantier'] = self.chantier.to_dict()
+
+        if self.validateur:
+            result['validateur'] = self.validateur.to_dict()
         
         return result
 
@@ -270,25 +282,33 @@ class Mouvement(db.Model):
     __tablename__ = 'mouvements'
     
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.Date, nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False, index=True)  # Date du mouvement
     numero_bs_br_cj = db.Column(db.String(100))
     chantier_id = db.Column(db.Integer, db.ForeignKey('chantiers.id'), index=True)
     stock_id = db.Column(db.Integer, db.ForeignKey('stocks.id'), nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=False, index=True)
     entree = db.Column(db.Numeric(12, 2))
     sortie = db.Column(db.Numeric(12, 2))
-    prix_unitaire = db.Column(db.Numeric(12, 2), nullable=False) # ✅ OBLIGATOIRE
+    prix_unitaire = db.Column(db.Numeric(12, 2), nullable=False)
     type_mouvement = db.Column(db.String(20))
     utilisateur = db.Column(db.String(100))
     commentaire = db.Column(db.Text)
+    
+    # ✅ NOUVEAUX CHAMPS (cahier des charges)
+    date_saisie = db.Column(db.DateTime, default=datetime.utcnow, index=True)  # Date de saisie
+    fichier_pj = db.Column(db.String(255), nullable=True)
+    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)  # Brouillon | Validé
+    validateur_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    date_validation = db.Column(db.DateTime, nullable=True)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relations
     stock = db.relationship('Stock', back_populates='mouvements')
     article = db.relationship('Article', back_populates='mouvements')
     chantier = db.relationship('Chantier', back_populates='mouvements')
+    validateur = db.relationship('User', foreign_keys=[validateur_id])
     
-    # Index composites pour optimisation
     __table_args__ = (
         Index('idx_mouvement_date_chantier', 'date', 'chantier_id'),
         Index('idx_mouvement_stock_date', 'stock_id', 'date'),
@@ -298,16 +318,20 @@ class Mouvement(db.Model):
         result = {
             'id': self.id,
             'date': self.date.isoformat() if self.date else None,
+            'date_saisie': self.date_saisie.isoformat() if self.date_saisie else None,
             'numero_bs_br_cj': self.numero_bs_br_cj,
             'chantier_id': self.chantier_id,
             'stock_id': self.stock_id,
             'article_id': self.article_id,
             'entree': float(self.entree) if self.entree else None,
             'sortie': float(self.sortie) if self.sortie else None,
-            'prix_unitaire': float(self.prix_unitaire) if self.prix_unitaire else 0.0, # ✅ Ajout
+            'prix_unitaire': float(self.prix_unitaire) if self.prix_unitaire else 0.0,
             'type_mouvement': self.type_mouvement,
             'utilisateur': self.utilisateur,
             'commentaire': self.commentaire,
+            'fichier_pj': self.fichier_pj,
+            'statut_validation': self.statut_validation,
+            'date_validation': self.date_validation.isoformat() if self.date_validation else None,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
         
@@ -318,6 +342,8 @@ class Mouvement(db.Model):
                 result['chantier'] = self.chantier.to_dict()
             if self.stock:
                 result['stock_numero'] = self.stock.numero_fiche
+            if self.validateur:
+                result['validateur'] = self.validateur.to_dict()
         
         return result
 
@@ -402,12 +428,8 @@ def get_stock_statistics():
     except Exception as e:
         print(f"Erreur lors du calcul des statistiques: {e}")
         return {
-            'total': 0,
-            'total_quantite': 0.0,
-            'total_valeur': 0.0,
-            'count_normal': 0,
-            'count_alert': 0,
-            'count_urgent': 0
+            'total': 0, 'total_quantite': 0.0, 'total_valeur': 0.0,
+            'count_normal': 0, 'count_alert': 0, 'count_urgent': 0
         }
 
 
@@ -431,8 +453,4 @@ def get_mouvement_statistics():
         }
     except Exception as e:
         print(f"Erreur lors du calcul des statistiques de mouvements: {e}")
-        return {
-            'total_entrees': 0.0,
-            'total_sorties': 0.0,
-            'total_mouvements': 0
-        }
+        return {'total_entrees': 0.0, 'total_sorties': 0.0, 'total_mouvements': 0}

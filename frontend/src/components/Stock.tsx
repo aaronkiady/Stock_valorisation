@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Stock, Article, Chantier, StockFormData } from '../types';
-import { stocksApi, articlesApi, chantiersApi, exportApi, importApi } from '../services/api';
-import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign } from 'lucide-react';
+import { stocksApi, articlesApi, chantiersApi, exportApi, importApi, uploadApi } from '../services/api';
+import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign, CheckCircle, FileText, Calendar, X } from 'lucide-react';
 import SearchableSelectAPI from './SearchableSelectAPI';
 import SearchableSelect from './SearchableSelect';
 import useDebounce from '../hooks/useDebounce';
+import { useAuth } from '../contexts/AuthContext';
 
 const StockComponent: React.FC = () => {
+  const { user } = useAuth();
+  const canValidate = user?.role === 'admin' || user?.role === 'RespStock';
+
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [chantiers, setChantiers] = useState<Chantier[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,14 +31,23 @@ const StockComponent: React.FC = () => {
     article_id: undefined as number | undefined,
     unite: '',
     quantite_initiale: 0,
-    prix_unitaire: 0, // ✅ NOUVEAU CHAMP
+    prix_unitaire: 0,
+    // ✅ NOUVEAUX CHAMPS
+    date_inventaire: new Date().toISOString().split('T')[0],
+    reference_document: '',
+    fichier_pj: '' as string | undefined,
   });
+  
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [uploadingPj, setUploadingPj] = useState(false);
+  const [validatingId, setValidatingId] = useState<number | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pjInputRef = useRef<HTMLInputElement>(null);
 
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
@@ -108,6 +121,34 @@ const StockComponent: React.FC = () => {
       sublabel: chantier.nom
     }));
 
+  // ✅ Gestion de l'upload de PJ
+  const handlePjUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    try {
+      setUploadingPj(true);
+      setError(null);
+      const result = await uploadApi.uploadFile(file);
+      setFormData(prev => ({ ...prev, fichier_pj: result.filename }));
+      setSuccess(`Fichier "${file.name}" uploadé`);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur upload');
+    } finally {
+      setUploadingPj(false);
+    }
+  };
+
+  const handleDownloadPj = async (filename: string) => {
+    try {
+      await uploadApi.downloadPj(filename);
+    } catch (err) {
+      setError('Impossible de télécharger le fichier');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -126,6 +167,10 @@ const StockComponent: React.FC = () => {
         unite: formData.unite,
         quantite_initiale: formData.quantite_initiale,
         prix_unitaire: formData.prix_unitaire,
+        // ✅ NOUVEAUX CHAMPS
+        date_inventaire: formData.date_inventaire || undefined,
+        reference_document: formData.reference_document || undefined,
+        fichier_pj: formData.fichier_pj || undefined,
       };
 
       if (editingId) {
@@ -133,7 +178,7 @@ const StockComponent: React.FC = () => {
         setSuccess('Stock mis à jour avec succès');
       } else {
         await stocksApi.create(dataToSubmit);
-        setSuccess('Stock créé avec succès');
+        setSuccess('Stock créé avec succès (en attente de validation)');
       }
       
       loadStocks();
@@ -145,7 +190,27 @@ const StockComponent: React.FC = () => {
     }
   };
 
+  const handleValidate = async (id: number) => {
+    if (!window.confirm('Confirmer la validation de ce stock ?')) return;
+    try {
+      setValidatingId(id);
+      setError(null);
+      await stocksApi.validate(id);
+      setSuccess('Stock validé avec succès !');
+      loadStocks();
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur validation');
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
   const handleEdit = (stock: Stock) => {
+    if (stock.statut_validation === 'Validé') {
+      setError('Impossible de modifier un stock validé');
+      return;
+    }
     setEditingId(stock.id);
     setFormData({
       numero_fiche: stock.numero_fiche,
@@ -154,7 +219,10 @@ const StockComponent: React.FC = () => {
       article_id: stock.article_id,
       unite: stock.unite || '',
       quantite_initiale: stock.quantite_initiale,
-      prix_unitaire: stock.prix_unitaire || 0, // ✅ Récupération du prix
+      prix_unitaire: stock.prix_unitaire || 0,
+      date_inventaire: stock.date_inventaire || new Date().toISOString().split('T')[0],
+      reference_document: stock.reference_document || '',
+      fichier_pj: stock.fichier_pj || undefined,
     });
     setShowModal(true);
   };
@@ -225,6 +293,9 @@ const StockComponent: React.FC = () => {
       unite: '',
       quantite_initiale: 0,
       prix_unitaire: 0,
+      date_inventaire: new Date().toISOString().split('T')[0],
+      reference_document: '',
+      fichier_pj: undefined,
     });
     setEditingId(null);
     setError(null);
@@ -232,9 +303,8 @@ const StockComponent: React.FC = () => {
 
   const stats = {
     total: total,
-    critique: stocks.filter(s => s.statut === 'Approvisionnement URGENT!').length,
-    alert: stocks.filter(s => s.statut === 'Approvisionnement nécessaire').length,
-    normal: stocks.filter(s => s.statut === 'Stock Normal').length,
+    brouillon: stocks.filter(s => s.statut_validation === 'Brouillon').length,
+    valide: stocks.filter(s => s.statut_validation === 'Validé').length,
   };
 
   const formatPrice = (price: number): string => {
@@ -244,6 +314,12 @@ const StockComponent: React.FC = () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     }).format(price);
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    try { return new Date(dateStr).toLocaleDateString('fr-FR'); }
+    catch { return dateStr; }
   };
 
   if (loading) {
@@ -290,11 +366,10 @@ const StockComponent: React.FC = () => {
       {importSummary && <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg text-sm">{importSummary}</div>}
 
       {/* Statistiques */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4"><p className="text-sm text-blue-600 font-medium">Total</p><p className="text-2xl font-bold text-blue-900">{stats.total}</p></div>
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-sm text-green-600 font-medium">Normal</p><p className="text-2xl font-bold text-green-900">{stats.normal}</p></div>
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"><p className="text-sm text-yellow-600 font-medium">Alerte</p><p className="text-2xl font-bold text-yellow-900">{stats.alert}</p></div>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4"><p className="text-sm text-red-600 font-medium">Critique</p><p className="text-2xl font-bold text-red-900">{stats.critique}</p></div>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4"><p className="text-sm text-yellow-600 font-medium">En attente de validation</p><p className="text-2xl font-bold text-yellow-900">{stats.brouillon}</p></div>
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-sm text-green-600 font-medium">Validés</p><p className="text-2xl font-bold text-green-900">{stats.valide}</p></div>
       </div>
 
       {/* Barre de recherche */}
@@ -312,35 +387,58 @@ const StockComponent: React.FC = () => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">N° Fiche</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Réf. Odoo</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Inventaire</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Réf. Doc</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chantier</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Article</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Initiale</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Finale</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qté</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prix Total</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">État</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PJ</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {stocks.length === 0 ? (
-                <tr><td colSpan={9} className="px-6 py-12 text-center"><Package className="mx-auto h-12 w-12 text-gray-400" /><p className="mt-2 text-sm text-gray-500">{searchTerm ? 'Aucun stock trouvé' : 'Aucun stock enregistré'}</p></td></tr>
+                <tr><td colSpan={11} className="px-6 py-12 text-center"><Package className="mx-auto h-12 w-12 text-gray-400" /><p className="mt-2 text-sm text-gray-500">{searchTerm ? 'Aucun stock trouvé' : 'Aucun stock enregistré'}</p></td></tr>
               ) : (
                 stocks.map((stock) => (
                   <tr key={stock.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{stock.numero_fiche}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{stock.reference_odoo || '-'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(stock.date_inventaire)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{stock.reference_document || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{stock.chantier?.code || '-'}</td>
                     <td className="px-6 py-4 text-sm text-gray-900"><div><p className="font-medium">{stock.article?.reference_interne}</p><p className="text-gray-500">{stock.article?.nom}</p></div></td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{stock.quantite_initiale} {stock.unite}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{stock.quantite_finale} {stock.unite}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatPrice(stock.prix_total || 0)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 text-xs font-semibold rounded-full ${stock.statut === 'Stock Normal' ? 'bg-green-100 text-green-800' : stock.statut === 'Approvisionnement nécessaire' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{stock.statut}</span>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${stock.statut_validation === 'Validé' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        {stock.statut_validation}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {stock.fichier_pj ? (
+                        <button onClick={() => handleDownloadPj(stock.fichier_pj!)} className="text-blue-600 hover:text-blue-900" title="Télécharger PJ">
+                          <FileText size={18} />
+                        </button>
+                      ) : <span className="text-gray-400">-</span>}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                      <button onClick={() => handleEdit(stock)} className="text-blue-600 hover:text-blue-900"><Edit2 size={18} /></button>
-                      <button onClick={() => handleDelete(stock.id)} className="text-red-600 hover:text-red-900"><Trash2 size={18} /></button>
+                      {canValidate && stock.statut_validation === 'Brouillon' && (
+                        <button onClick={() => handleValidate(stock.id)} disabled={validatingId === stock.id} className="text-green-600 hover:text-green-900 inline-flex" title="Valider">
+                          <CheckCircle size={18} />
+                        </button>
+                      )}
+                      {stock.statut_validation === 'Brouillon' && (
+                        <button onClick={() => handleEdit(stock)} className="text-blue-600 hover:text-blue-900"><Edit2 size={18} /></button>
+                      )}
+                      {stock.statut_validation === 'Brouillon' && (
+                        <button onClick={() => handleDelete(stock.id)} className="text-red-600 hover:text-red-900"><Trash2 size={18} /></button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -370,14 +468,6 @@ const StockComponent: React.FC = () => {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start">
-                <AlertCircle className="text-blue-600 mr-2 flex-shrink-0 mt-0.5" size={20} />
-                <div>
-                  <p className="text-blue-800 font-medium">Recherche d'articles optimisée</p>
-                  <p className="text-blue-700 text-sm mt-1">Tapez au moins 2 caractères pour rechercher parmi vos 150 000+ articles</p>
-                </div>
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Numéro de Fiche <span className="text-red-500">*</span></label>
@@ -389,9 +479,24 @@ const StockComponent: React.FC = () => {
                 </div>
               </div>
 
-              <SearchableSelect label="Chantier" options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined })} placeholder="Rechercher un chantier..." allowEmpty={false} error={!formData.chantier_id && error ? 'Chantier requis' : undefined} />
+              {/* ✅ NOUVEAUX CHAMPS */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <Calendar className="inline mr-1" size={16} />
+                    Date d'inventaire
+                  </label>
+                  <input type="date" value={formData.date_inventaire} onChange={(e) => setFormData({ ...formData, date_inventaire: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Référence document</label>
+                  <input type="text" value={formData.reference_document} onChange={(e) => setFormData({ ...formData, reference_document: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: INV-2025-001" />
+                </div>
+              </div>
 
-              <SearchableSelectAPI label="Article (Recherche parmi 150 000+)" placeholder="Tapez pour rechercher (ex: collier, tuyau, etc.)" value={formData.article_id} onChange={(value) => setFormData({ ...formData, article_id: value })} searchFunction={searchArticles} getSelectedLabel={getArticleLabel} allowEmpty={false} minChars={2} error={!formData.article_id && error ? 'Article requis' : undefined} />
+              <SearchableSelect label="Chantier" options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined })} placeholder="Rechercher un chantier..." allowEmpty={false} />
+
+              <SearchableSelectAPI label="Article (Recherche parmi 150 000+)" placeholder="Tapez pour rechercher (ex: collier, tuyau, etc.)" value={formData.article_id} onChange={(value) => setFormData({ ...formData, article_id: value })} searchFunction={searchArticles} getSelectedLabel={getArticleLabel} allowEmpty={false} minChars={2} />
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
@@ -402,22 +507,45 @@ const StockComponent: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Quantité Initiale <span className="text-red-500">*</span></label>
                   <input type="number" step="0.01" min="0" value={formData.quantite_initiale || ''} onChange={(e) => setFormData({ ...formData, quantite_initiale: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                 </div>
-                {/* ✅ CHAMP PRIX INITIAL */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <DollarSign className="inline mr-1" size={16} />
                     Prix Unitaire Initial <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formData.prix_unitaire || ''}
-                    onChange={(e) => setFormData({ ...formData, prix_unitaire: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Sert de base au CMUP.</p>
+                  <input type="number" step="0.01" min="0" value={formData.prix_unitaire || ''} onChange={(e) => setFormData({ ...formData, prix_unitaire: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                </div>
+              </div>
+
+              {/* ✅ UPLOAD PJ */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <FileText className="inline mr-1" size={16} />
+                  Pièce jointe (PJ)
+                </label>
+                <input ref={pjInputRef} type="file" onChange={handlePjUpload} className="hidden" />
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => pjInputRef.current?.click()}
+                    disabled={uploadingPj}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center space-x-2 disabled:opacity-50"
+                  >
+                    <Upload size={16} />
+                    <span>{uploadingPj ? 'Upload...' : 'Choisir un fichier'}</span>
+                  </button>
+                  {formData.fichier_pj && (
+                    <div className="flex items-center space-x-2 text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg">
+                      <FileText size={16} />
+                      <span className="truncate max-w-xs">{formData.fichier_pj}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, fichier_pj: undefined })}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

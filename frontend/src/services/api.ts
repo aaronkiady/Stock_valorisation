@@ -1,7 +1,6 @@
 /**
  * Service API pour communiquer avec le backend Flask
- * ✅ CORRECTION MAJEURE : Gestion robuste des réponses paginées et non-paginées
- * ✅ Support complet de la recherche et pagination
+ * ✅ Support de la validation, PJ et saisie groupée
  */
 import {
   Article,
@@ -15,12 +14,13 @@ import {
   ArticleFormData,
   StockFormData,
   MouvementFormData,
+  MouvementBatchData,
   ChantierFormData,
   SearchFilters,
   ProfileFormData
 } from '../types';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5880/api';
 
 // Helper pour les headers avec authentification
 const getHeaders = (): HeadersInit => {
@@ -40,7 +40,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   return response.json();
 };
 
-// Helper pour télécharger un fichier (export Excel/CSV) avec authentification
+// Helper pour télécharger un fichier
 const downloadFile = async (url: string, baseFilename: string): Promise<void> => {
   const token = localStorage.getItem('token');
   const response = await fetch(url, {
@@ -54,9 +54,7 @@ const downloadFile = async (url: string, baseFilename: string): Promise<void> =>
     try {
       const err = await response.json();
       message = err.error || message;
-    } catch {
-      /* réponse non-JSON */
-    }
+    } catch { /* réponse non-JSON */ }
     throw new Error(message);
   }
 
@@ -74,31 +72,63 @@ const downloadFile = async (url: string, baseFilename: string): Promise<void> =>
   window.URL.revokeObjectURL(downloadUrl);
 };
 
+// ==================== UPLOAD / PJ ====================
+
+export const uploadApi = {
+  uploadFile: async (file: File): Promise<{ filename: string; message: string }> => {
+    const token = localStorage.getItem('token');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/upload-pj`, {
+      method: 'POST',
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` })
+      },
+      body: formData
+    });
+    return handleResponse<{ filename: string; message: string }>(response);
+  },
+
+  downloadPj: async (filename: string): Promise<void> => {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/download-pj/${encodeURIComponent(filename)}`, {
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` })
+      }
+    });
+
+    if (!response.ok) throw new Error('Fichier introuvable');
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+};
+
 // ==================== EXPORT EXCEL ====================
 
 export const exportApi = {
-  /**
-   * Exporter les stocks en fichier Excel (avec la recherche courante).
-   */
   stocks: async (search: string = ''): Promise<void> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
-
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
     const query = params.toString() ? `?${params.toString()}` : '';
     return downloadFile(`${API_BASE_URL}/stocks/export${query}`, `stocks_${timestamp}`);
   },
 
-  /**
-   * Exporter les mouvements en fichier Excel (avec les filtres courants).
-   */
   mouvements: async (filters: SearchFilters = {}): Promise<void> => {
     const params = new URLSearchParams();
     if (filters.chantier_id) params.append('chantier_id', filters.chantier_id.toString());
     if (filters.date_debut) params.append('date_debut', filters.date_debut);
     if (filters.date_fin) params.append('date_fin', filters.date_fin);
     if (filters.type_mouvement) params.append('type_mouvement', filters.type_mouvement);
-
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
     const query = params.toString() ? `?${params.toString()}` : '';
     return downloadFile(`${API_BASE_URL}/mouvements/export${query}`, `mouvements_${timestamp}`);
@@ -115,9 +145,6 @@ export interface ImportReport {
 }
 
 export const importApi = {
-  /**
-   * Importer des stocks en masse depuis un fichier CSV.
-   */
   importStocks: async (file: File): Promise<ImportReport> => {
     const token = localStorage.getItem('token');
     const formData = new FormData();
@@ -137,36 +164,21 @@ export const importApi = {
 // ==================== ARTICLES ====================
 
 export const articlesApi = {
-  /**
-   * ✅ CORRECTION : Gestion robuste des réponses paginées et non-paginées
-   */
   getAll: async (filters: SearchFilters = {}): Promise<PaginatedResponse<Article>> => {
     const params = new URLSearchParams();
     if (filters.search) params.append('search', filters.search);
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    console.log('📡 API Articles - Requête:', `${API_BASE_URL}/articles?${params}`);
-
     const response = await fetch(`${API_BASE_URL}/articles?${params}`, {
       headers: getHeaders()
     });
     
     const data = await handleResponse<any>(response);
-    console.log('📦 API Articles - Réponse brute:', data);
     
-    // ✅ Normaliser la réponse pour toujours retourner un format paginé
     if (Array.isArray(data)) {
-      // Si c'est un simple tableau
-      return {
-        articles: data,
-        items: data,
-        total: data.length,
-        pages: 1,
-        current_page: 1
-      };
+      return { articles: data, items: data, total: data.length, pages: 1, current_page: 1 };
     } else if (data && typeof data === 'object') {
-      // Si c'est déjà un objet paginé
       return {
         articles: data.articles || data.items || [],
         items: data.articles || data.items || [],
@@ -176,20 +188,11 @@ export const articlesApi = {
       };
     }
     
-    // Fallback
-    return {
-      articles: [],
-      items: [],
-      total: 0,
-      pages: 0,
-      current_page: 1
-    };
+    return { articles: [], items: [], total: 0, pages: 0, current_page: 1 };
   },
 
   getById: async (id: number): Promise<Article> => {
-    const response = await fetch(`${API_BASE_URL}/articles/${id}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/articles/${id}`, { headers: getHeaders() });
     return handleResponse<Article>(response);
   },
 
@@ -223,42 +226,29 @@ export const articlesApi = {
 // ==================== CHANTIERS ====================
 
 export const chantiersApi = {
-  /**
-   * ✅ CORRECTION : Gestion robuste des réponses paginées et non-paginées
-   */
   getAll: async (filters: SearchFilters = {}): Promise<any> => {
     const params = new URLSearchParams();
     if (filters.search) params.append('search', filters.search);
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    console.log('📡 API Chantiers - Requête:', `${API_BASE_URL}/chantiers?${params}`);
-
     const response = await fetch(`${API_BASE_URL}/chantiers?${params}`, {
       headers: getHeaders()
     });
     
     const data = await handleResponse<any>(response);
-    console.log('📦 API Chantiers - Réponse brute:', data);
     
-    // ✅ Normaliser la réponse - peut retourner un tableau ou un objet paginé
-    if (Array.isArray(data)) {
-      return data;
-    } else if (data && typeof data === 'object') {
-      // Si c'est un objet avec chantiers ou items
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
       if (data.chantiers) return data.chantiers;
       if (data.items) return data.items;
-      // Sinon retourner l'objet complet (pour pagination)
       return data;
     }
-    
     return [];
   },
 
   getById: async (id: number): Promise<Chantier> => {
-    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, { headers: getHeaders() });
     return handleResponse<Chantier>(response);
   },
 
@@ -306,9 +296,7 @@ export const stocksApi = {
   },
 
   getById: async (id: number): Promise<Stock> => {
-    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, { headers: getHeaders() });
     return handleResponse<Stock>(response);
   },
 
@@ -336,6 +324,15 @@ export const stocksApi = {
       headers: getHeaders()
     });
     return handleResponse<{ message: string }>(response);
+  },
+
+  // ✅ NOUVEAU : Validation
+  validate: async (id: number): Promise<Stock> => {
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}/validate`, {
+      method: 'PUT',
+      headers: getHeaders()
+    });
+    return handleResponse<Stock>(response);
   }
 };
 
@@ -346,7 +343,8 @@ export const mouvementsApi = {
     const params = new URLSearchParams();
     if (filters.stock_id) params.append('stock_id', filters.stock_id.toString());
     if (filters.chantier_id) params.append('chantier_id', filters.chantier_id.toString());
-    if (filters.type_mouvement) params.append('type', filters.type_mouvement);
+    if (filters.type_mouvement) params.append('type_mouvement', filters.type_mouvement);
+    if (filters.statut_validation) params.append('statut_validation', filters.statut_validation);
     if (filters.date_debut) params.append('date_debut', filters.date_debut);
     if (filters.date_fin) params.append('date_fin', filters.date_fin);
     if (filters.page) params.append('page', filters.page.toString());
@@ -359,9 +357,7 @@ export const mouvementsApi = {
   },
 
   getById: async (id: number): Promise<Mouvement> => {
-    const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { headers: getHeaders() });
     return handleResponse<Mouvement>(response);
   },
 
@@ -380,6 +376,35 @@ export const mouvementsApi = {
       headers: getHeaders()
     });
     return handleResponse<{ message: string }>(response);
+  },
+
+  // ✅ NOUVEAU : Validation
+  validate: async (id: number): Promise<Mouvement> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}/validate`, {
+      method: 'PUT',
+      headers: getHeaders()
+    });
+    return handleResponse<Mouvement>(response);
+  },
+
+  // ✅ NOUVEAU : Saisie groupée
+  createBatch: async (data: MouvementBatchData): Promise<{
+    total: number;
+    crees: number;
+    erreurs: { ligne: number; erreur: string }[];
+    mouvements: Mouvement[];
+  }> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/batch`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data)
+    });
+    return handleResponse<{
+      total: number;
+      crees: number;
+      erreurs: { ligne: number; erreur: string }[];
+      mouvements: Mouvement[];
+    }>(response);
   }
 };
 
@@ -404,12 +429,8 @@ export const auditApi = {
 // ==================== DASHBOARD ====================
 
 export const dashboardApi = {
-  getStats: async (dateDebut?: string, dateFin?: string): Promise<DashboardStats> => {
-    const params = new URLSearchParams();
-    if (dateDebut) params.append('date_debut', dateDebut);
-    if (dateFin) params.append('date_fin', dateFin);
-
-    const response = await fetch(`${API_BASE_URL}/dashboard/stats?${params}`, {
+  getStats: async (): Promise<DashboardStats> => {
+    const response = await fetch(`${API_BASE_URL}/dashboard/stats`, {
       headers: getHeaders()
     });
     return handleResponse<DashboardStats>(response);
@@ -436,17 +457,8 @@ export interface UserData {
 
 export const usersApi = {
   getAll: async (): Promise<UserData[]> => {
-    const response = await fetch(`${API_BASE_URL}/users`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/users`, { headers: getHeaders() });
     return handleResponse<UserData[]>(response);
-  },
-
-  getById: async (id: number): Promise<UserData> => {
-    const response = await fetch(`${API_BASE_URL}/users/${id}`, {
-      headers: getHeaders()
-    });
-    return handleResponse<UserData>(response);
   },
 
   create: async (data: Partial<UserData> & { password: string }): Promise<UserData> => {
@@ -496,9 +508,7 @@ export interface AuthResponse {
 
 export const profileApi = {
   get: async (): Promise<UserData> => {
-    const response = await fetch(`${API_BASE_URL}/profile`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/profile`, { headers: getHeaders() });
     return handleResponse<UserData>(response);
   },
 

@@ -1,7 +1,6 @@
 /**
- * AuthContext - VERSION CORRIGÉE pour accès distant
- * ================================
- * Gestion améliorée de l'authentification avec support multi-machine
+ * AuthContext - VERSION CORRIGÉE
+ * Suppression de `credentials: 'include'` (JWT dans header, pas cookie)
  */
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Role } from '../roles';
@@ -43,7 +42,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   
-  // ✅ CORRECTION: Fonction pour obtenir l'URL de base dynamiquement
   const getApiBaseUrl = (): string => {
     if (process.env.REACT_APP_API_URL) {
       return process.env.REACT_APP_API_URL;
@@ -51,7 +49,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     
     if (process.env.NODE_ENV === 'development') {
       const { hostname } = window.location;
-      return hostname === 'localhost' //|| hostname === '192.168.2.15' 
+      return hostname === 'localhost' || hostname === '127.0.0.1'
         ? 'http://localhost:5880/api'
         : `http://${hostname}:5880/api`;
     }
@@ -61,7 +59,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const API_BASE_URL = getApiBaseUrl();
 
-  // Charger l'utilisateur depuis le localStorage au démarrage
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const token = localStorage.getItem('token');
@@ -82,13 +79,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log('[AUTH] Tentative de connexion pour:', username);
       console.log('[AUTH] URL API complète:', `${API_BASE_URL}/auth/login`);
-      console.log('[AUTH] Host actuel:', window.location.hostname);
       
-      // ✅ AJOUT: Timeout pour éviter les blocages infinis
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      // Appel à l'API de connexion
+      // ⚠️ PAS de credentials: 'include' ici — on utilise un JWT dans le header
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: {
@@ -96,39 +91,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         },
         body: JSON.stringify({ username, password }),
         signal: controller.signal,
-        credentials: 'include'
       });
 
       clearTimeout(timeoutId);
 
       console.log('[AUTH] Statut de la réponse:', response.status);
 
-      // Lire le contenu de la réponse
       const data = await response.json();
       console.log('[AUTH] Réponse du serveur:', data);
 
-      // Gérer les erreurs
       if (!response.ok) {
         console.error('[AUTH] Erreur de connexion:', data);
-        
         let errorMessage = 'Échec de la connexion';
-        
-        if (data.error) {
-          errorMessage = data.error;
-        }
-        
-        if (data.details && data.details.includes('hash')) {
-          errorMessage = 'Erreur de configuration serveur. Contactez l\'administrateur.';
-          console.error('[AUTH] Problème de hash détecté:', data.details);
-          if (data.solution) {
-            console.error('[AUTH] Solution:', data.solution);
-          }
-        }
-        
+        if (data.error) errorMessage = data.error;
         throw new Error(errorMessage);
       }
 
-      // Vérifier que nous avons bien un token et un user
       if (!data.token || !data.user) {
         console.error('[AUTH] Réponse invalide - token ou user manquant');
         throw new Error('Réponse serveur invalide');
@@ -136,7 +114,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       console.log('[AUTH] Connexion réussie pour:', data.user.username);
       
-      // Stocker le token et l'utilisateur
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       
@@ -145,7 +122,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('[AUTH] Erreur complète:', error);
       
-      // ✅ AMÉLIORATION: Messages d'erreur plus précis
       if (error instanceof TypeError) {
         if (error.message.includes('Failed to fetch')) {
           throw new Error(`Impossible de se connecter au serveur à l'adresse: ${API_BASE_URL}. Vérifiez:\n1. Que le backend est démarré sur le serveur\n2. Que le port 5880 est accessible\n3. Les extensions navigateur (AdBlock)\n4. La connexion réseau`);
