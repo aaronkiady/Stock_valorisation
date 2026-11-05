@@ -265,3 +265,47 @@ export interface ProfileFormData {
   password?: string;
   confirm_password?: string;
 }
+
+// ==================== TYPES POUR LA VALORISATION MENSUELLE ====================
+// Remplace l'ancienne interface ValorisationMois par celle-ci :
+export interface ValorisationMois {
+  mois: number;
+  label: string;
+  date_fin: string;
+  qte_entrees: number;
+  valeur_entrees: number;
+  qte_sorties: number;
+  valeur_sorties: number;
+  nb_articles: number;
+  nb_mouvements: number;
+}
+
+// Remplace l'ancienne interface ValorisationDetailLigne par celle-ci :
+export interface ValorisationDetailLigne {
+  mouvement_id: number;
+  type: 'ENTREE' | 'SORTIE';
+  numero_piece: string;
+  article_ref: string;
+  article_nom: string;
+  chantier_code: string;
+  chantier_nom: string;
+  quantite: number;
+  prix_unitaire: number;
+  valeur: number;
+}
+
+// Remplace l'ancienne interface ValorisationDetailResponse par celle-ci :
+export interface ValorisationDetailResponse {
+  year: number;
+  mois: number;
+  date_debut: string;
+  date_fin: string;
+  total_entrees: number;
+  total_sorties: number;
+  detail: ValorisationDetailLigne[];
+}
+
+export interface ValorisationMensuelleResponse {
+  year: number;
+  mois: ValorisationMois[];
+}

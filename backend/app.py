@@ -5,7 +5,7 @@ from datetime import datetime, date, timedelta
 from functools import wraps
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-from sqlalchemy import cast, String
+from sqlalchemy import cast, String, func
 import io
 import csv
 import jwt
@@ -100,7 +100,7 @@ def build_mouvements_query(chantier_id=None, date_debut='', date_fin='', type_mo
     return query.order_by(Mouvement.date.desc())
 
 VALID_ROLES = ('admin', 'RespStock', 'user')
-VALIDATEURS = ('admin', 'RespStock')  # Qui peut valider
+VALIDATEURS = ('admin', 'RespStock')
 
 def parse_import_csv(raw_bytes):
     try: text = raw_bytes.decode('utf-8-sig')
@@ -132,14 +132,12 @@ def create_app(config_name=None):
     app.config.from_object(config_class)
     db.init_app(app)
     
-    # ========= CONFIG UPLOAD FICHIERS =========
     UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
     
-    # ✅ CORS CORRIGÉ (sans credentials + origins spécifiques)
     CORS(app, 
          resources={r"/api/*": {
              "origins": [
@@ -305,17 +303,13 @@ def create_app(config_name=None):
     def upload_pj():
         if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         try:
-            if 'file' not in request.files:
-                return jsonify({'error': 'Aucun fichier fourni'}), 400
+            if 'file' not in request.files: return jsonify({'error': 'Aucun fichier fourni'}), 400
             file = request.files['file']
-            if file.filename == '':
-                return jsonify({'error': 'Aucun fichier sélectionné'}), 400
-            
+            if file.filename == '': return jsonify({'error': 'Aucun fichier sélectionné'}), 400
             filename = secure_filename(file.filename)
             unique_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
             file.save(file_path)
-            
             return jsonify({'filename': unique_filename, 'message': 'Fichier uploadé avec succès'}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -353,9 +347,7 @@ def create_app(config_name=None):
             paginated = query.order_by(Article.nom).paginate(page=page, per_page=per_page, error_out=False)
             return jsonify({
                 'articles': [a.to_dict() for a in paginated.items],
-                'total': paginated.total,
-                'pages': paginated.pages,
-                'current_page': page
+                'total': paginated.total, 'pages': paginated.pages, 'current_page': page
             }), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -365,17 +357,12 @@ def create_app(config_name=None):
     def create_article():
         try:
             data = request.json
-            if not data.get('reference_interne') or not data.get('nom'):
-                return jsonify({'error': 'Référence et nom requis'}), 400
+            if not data.get('reference_interne') or not data.get('nom'): return jsonify({'error': 'Référence et nom requis'}), 400
             existing = Article.query.filter_by(reference_interne=data['reference_interne']).first()
             if existing: return jsonify({'error': 'Référence existe déjà'}), 400
-            
             article = Article(
-                reference_interne=data['reference_interne'],
-                nom=data['nom'],
-                cout=0.0,
-                responsable=data.get('responsable', ''),
-                unite_mesure=data.get('unite_mesure', 'unité')
+                reference_interne=data['reference_interne'], nom=data['nom'], cout=0.0,
+                responsable=data.get('responsable', ''), unite_mesure=data.get('unite_mesure', 'unité')
             )
             db.session.add(article)
             db.session.commit()
@@ -540,7 +527,7 @@ def create_app(config_name=None):
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/stocks', methods=['POST'])
-    @roles_required('admin', 'RespStock', 'user')  # ✅ Tous peuvent créer (mais validation requise)
+    @roles_required('admin', 'RespStock', 'user')
     def create_stock():
         try:
             data = request.json
@@ -555,39 +542,26 @@ def create_app(config_name=None):
             
             chantier = db.session.get(Chantier, data['chantier_id'])
             if not chantier: return jsonify({'error': 'Chantier introuvable'}), 404
-            
             article = db.session.get(Article, data['article_id'])
             if not article: return jsonify({'error': 'Article introuvable'}), 404
             
             prix_initial = float(data.get('prix_unitaire', 0))
             quantite_initiale = float(data.get('quantite_initiale', 0))
-
-            # Parse la date d'inventaire si fournie
             date_inv = None
             if data.get('date_inventaire'):
-                try:
-                    date_inv = datetime.strptime(data['date_inventaire'], '%Y-%m-%d').date()
-                except ValueError:
-                    pass
+                try: date_inv = datetime.strptime(data['date_inventaire'], '%Y-%m-%d').date()
+                except ValueError: pass
 
             stock = Stock(
-                numero_fiche=numero_fiche,
-                reference_odoo=data.get('reference_odoo', ''),
-                chantier_id=data['chantier_id'],
-                article_id=data['article_id'],
+                numero_fiche=numero_fiche, reference_odoo=data.get('reference_odoo', ''),
+                chantier_id=data['chantier_id'], article_id=data['article_id'],
                 unite=data.get('unite', article.unite_mesure),
-                quantite_initiale=quantite_initiale,
-                prix_unitaire=prix_initial,
-                # ✅ NOUVEAUX CHAMPS
-                date_inventaire=date_inv,
-                reference_document=data.get('reference_document', ''),
-                fichier_pj=data.get('fichier_pj', None),
-                statut_validation='Brouillon'
+                quantite_initiale=quantite_initiale, prix_unitaire=prix_initial,
+                date_inventaire=date_inv, reference_document=data.get('reference_document', ''),
+                fichier_pj=data.get('fichier_pj', None), statut_validation='Brouillon'
             )
-            
             stock.quantite_finale = quantite_initiale
             stock.prix_total = quantite_initiale * prix_initial
-            
             if stock.quantite_finale <= 0: stock.statut = 'Rupture de stock'
             elif stock.quantite_finale <= 5: stock.statut = 'Approvisionnement URGENT!'
             elif stock.quantite_finale <= 10: stock.statut = 'Approvisionnement nécessaire'
@@ -595,15 +569,9 @@ def create_app(config_name=None):
             
             db.session.add(stock)
             db.session.flush()
-
-            # ✅ Plus de recalcul immédiat : on attend la validation
-            # article.recalculer_cmup()  ← SUPPRIMÉ
-
             db.session.commit()
-            
             log_audit(get_current_user(), 'CREATE', 'stocks', stock.id, new_values=stock.to_dict(include_article=False, include_chantier=False), ip_address=get_client_ip())
             db.session.commit()
-            
             return jsonify(stock.to_dict()), 201
         except Exception as e:
             db.session.rollback()
@@ -616,35 +584,44 @@ def create_app(config_name=None):
         try:
             stock = db.session.get(Stock, stock_id)
             if not stock: return jsonify({'error': 'Stock non trouvé'}), 404
-            if stock.statut_validation == 'Validé':
-                return jsonify({'error': 'Impossible de modifier un stock validé'}), 400
+            if stock.statut_validation == 'Validé': return jsonify({'error': 'Impossible de modifier un stock validé'}), 400
             old_values = stock.to_dict(include_article=False, include_chantier=False)
             data = request.json
             
             if data.get('reference_odoo') is not None: stock.reference_odoo = data['reference_odoo']
             if data.get('unite'): stock.unite = data['unite']
-            if data.get('quantite_initiale') is not None: stock.quantite_initiale = float(data['quantite_initiale'])
             if data.get('prix_unitaire') is not None: stock.prix_unitaire = float(data['prix_unitaire'])
             if data.get('reference_document') is not None: stock.reference_document = data['reference_document']
             if data.get('fichier_pj') is not None: stock.fichier_pj = data['fichier_pj']
             if data.get('date_inventaire') is not None:
-                try:
-                    stock.date_inventaire = datetime.strptime(data['date_inventaire'], '%Y-%m-%d').date()
-                except ValueError:
-                    pass
+                try: stock.date_inventaire = datetime.strptime(data['date_inventaire'], '%Y-%m-%d').date()
+                except ValueError: pass
+            
+            if data.get('quantite_initiale') is not None: stock.quantite_initiale = float(data['quantite_initiale'])
             
             if data.get('article_id') and data['article_id'] != stock.article_id:
                 article = db.session.get(Article, data['article_id'])
                 if article: stock.article_id = data['article_id']
-            
             if data.get('chantier_id') and data['chantier_id'] != stock.chantier_id:
                 chantier = db.session.get(Chantier, data['chantier_id'])
                 if chantier: stock.chantier_id = data['chantier_id']
             
-            stock.recalculer_stock()
-            stock.recalculer_prix_stock()
-            db.session.commit()
+            if stock.statut_validation == 'Brouillon':
+                quantite_initiale = float(stock.quantite_initiale) if stock.quantite_initiale else 0.0
+                prix_unitaire = float(stock.prix_unitaire) if stock.prix_unitaire else 0.0
+                stock.entree = 0.0
+                stock.sortie = 0.0
+                stock.quantite_finale = quantite_initiale
+                stock.prix_total = quantite_initiale * prix_unitaire
+                if stock.quantite_finale <= 0: stock.statut = 'Rupture de stock'
+                elif stock.quantite_finale <= 5: stock.statut = 'Approvisionnement URGENT!'
+                elif stock.quantite_finale <= 10: stock.statut = 'Approvisionnement nécessaire'
+                else: stock.statut = 'Stock Normal'
+            else:
+                stock.recalculer_stock()
+                stock.recalculer_prix_stock()
             
+            db.session.commit()
             log_audit(get_current_user(), 'UPDATE', 'stocks', stock.id, old_values=old_values, new_values=stock.to_dict(include_article=False, include_chantier=False), ip_address=get_client_ip())
             db.session.commit()
             return jsonify(stock.to_dict()), 200
@@ -659,17 +636,31 @@ def create_app(config_name=None):
         try:
             stock = db.session.get(Stock, stock_id)
             if not stock: return jsonify({'error': 'Stock introuvable'}), 404
-            if stock.statut_validation == 'Validé':
-                return jsonify({'error': 'Déjà validé'}), 400
+            if stock.statut_validation == 'Validé': return jsonify({'error': 'Déjà validé'}), 400
             
             stock.statut_validation = 'Validé'
             stock.validateur_id = request.current_user.id
             stock.date_validation = datetime.utcnow()
             
-            # Recalculer le CMUP de l'article maintenant que c'est validé
-            if stock.article:
-                stock.article.recalculer_cmup()
-            
+            # ✅ Créer un mouvement d'entrée automatiquement pour le stock initial
+            if float(stock.quantite_initiale) > 0:
+                mouvement_initial = Mouvement(
+                    date=stock.date_inventaire or datetime.utcnow().date(),
+                    numero_bs_br_cj=f"INV-{stock.numero_fiche}",
+                    chantier_id=stock.chantier_id,
+                    stock_id=stock.id,
+                    article_id=stock.article_id,
+                    entree=stock.quantite_initiale,
+                    sortie=None,
+                    prix_unitaire=stock.prix_unitaire,
+                    type_mouvement='ENTREE',
+                    utilisateur=get_current_user(),
+                    commentaire="Entrée automatique (Validation d'inventaire)",
+                    statut_validation='Validé'
+                )
+                db.session.add(mouvement_initial)
+
+            if stock.article: stock.article.recalculer_cmup()
             db.session.commit()
             log_audit(get_current_user(), 'VALIDATE', 'stocks', stock.id, ip_address=get_client_ip())
             db.session.commit()
@@ -684,11 +675,9 @@ def create_app(config_name=None):
         if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         try:
             stock = Stock.query.get_or_404(stock_id)
-            if stock.statut_validation == 'Validé':
-                return jsonify({'error': 'Impossible de supprimer un stock validé'}), 400
+            if stock.statut_validation == 'Validé': return jsonify({'error': 'Impossible de supprimer un stock validé'}), 400
             nb_mouvements = Mouvement.query.filter_by(stock_id=stock_id).count()
-            if nb_mouvements > 0:
-                return jsonify({'error': f'Impossible de supprimer ce stock : {nb_mouvements} mouvement(s) associé(s)'}), 400
+            if nb_mouvements > 0: return jsonify({'error': f'Impossible de supprimer ce stock : {nb_mouvements} mouvement(s) associé(s)'}), 400
             old_values = stock.to_dict(include_article=False, include_chantier=False)
             db.session.delete(stock)
             db.session.commit()
@@ -746,64 +735,44 @@ def create_app(config_name=None):
             
             entree = float(data.get('entree', 0))
             sortie = float(data.get('sortie', 0))
-            
             prix_unitaire = float(data.get('prix_unitaire', 0))
-            if prix_unitaire <= 0:
-                return jsonify({'error': 'Le prix unitaire est obligatoire et doit être supérieur à 0'}), 400
-
+            
+            if prix_unitaire <= 0: return jsonify({'error': 'Le prix unitaire est obligatoire et doit être supérieur à 0'}), 400
             if entree == 0 and sortie == 0: return jsonify({'error': 'Veuillez saisir une entrée ou une sortie'}), 400
             if entree > 0 and sortie > 0: return jsonify({'error': 'Une entrée OU une sortie, pas les deux'}), 400
             
             stock = Stock.query.get(data['stock_id'])
             if not stock: return jsonify({'error': 'Stock introuvable'}), 404
-            if stock.statut_validation != 'Validé':
-                return jsonify({'error': 'Le stock doit être validé avant de saisir des mouvements'}), 400
+            if stock.statut_validation != 'Validé': return jsonify({'error': 'Le stock doit être validé avant de saisir des mouvements'}), 400
             
             article = Article.query.get(data['article_id'])
             if not article: return jsonify({'error': 'Article introuvable'}), 404
 
-            if sortie > 0:
-                if sortie > stock.quantite_finale:
-                    return jsonify({'error': f'Stock insuffisant ! Disponible: {stock.quantite_finale} {stock.unite}, Demandé: {sortie} {stock.unite}'}), 400
+            if sortie > 0 and sortie > stock.quantite_finale:
+                return jsonify({'error': f'Stock insuffisant ! Disponible: {stock.quantite_finale} {stock.unite}, Demandé: {sortie} {stock.unite}'}), 400
             
             type_mouvement = 'ENTREE' if entree > 0 else 'SORTIE'
             
             mouvement = Mouvement(
                 date=datetime.fromisoformat(data['date'].replace('Z', '+00:00')).date() if 'T' in data['date'] else datetime.strptime(data['date'], '%Y-%m-%d').date(),
-                numero_bs_br_cj=data.get('numero_bs_br_cj', ''),
-                chantier_id=data.get('chantier_id'),
-                stock_id=data['stock_id'],
-                article_id=data['article_id'],
-                entree=entree if entree > 0 else None,
-                sortie=sortie if sortie > 0 else None,
-                prix_unitaire=prix_unitaire,
-                type_mouvement=type_mouvement,
-                utilisateur=get_current_user(),
-                commentaire=data.get('commentaire', ''),
-                # ✅ NOUVEAUX CHAMPS
-                fichier_pj=data.get('fichier_pj', None),
-                statut_validation='Brouillon'
+                numero_bs_br_cj=data.get('numero_bs_br_cj', ''), chantier_id=data.get('chantier_id'),
+                stock_id=data['stock_id'], article_id=data['article_id'],
+                entree=entree if entree > 0 else None, sortie=sortie if sortie > 0 else None,
+                prix_unitaire=prix_unitaire, type_mouvement=type_mouvement,
+                utilisateur=get_current_user(), commentaire=data.get('commentaire', ''),
+                fichier_pj=data.get('fichier_pj', None), statut_validation='Brouillon'
             )
             
             db.session.add(mouvement)
             db.session.flush()
-
-            # ✅ Plus de recalcul immédiat : on attend la validation
-            # article.recalculer_cmup()  ← SUPPRIMÉ
-            # stock.recalculer_stock()  ← SUPPRIMÉ
-            # stock.recalculer_prix_stock()  ← SUPPRIMÉ
-
             db.session.commit()
-            
             log_audit(get_current_user(), 'CREATE', 'mouvements', mouvement.id, new_values=mouvement.to_dict(include_relations=False), ip_address=get_client_ip())
             db.session.commit()
-            
             return jsonify(mouvement.to_dict()), 201
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
-    # ✅ NOUVELLE ROUTE : Validation d'un mouvement
     @app.route('/api/mouvements/<int:mouvement_id>/validate', methods=['PUT', 'OPTIONS'])
     @roles_required(*VALIDATEURS)
     def validate_mouvement(mouvement_id):
@@ -811,20 +780,16 @@ def create_app(config_name=None):
         try:
             mouvement = db.session.get(Mouvement, mouvement_id)
             if not mouvement: return jsonify({'error': 'Mouvement introuvable'}), 404
-            if mouvement.statut_validation == 'Validé':
-                return jsonify({'error': 'Déjà validé'}), 400
+            if mouvement.statut_validation == 'Validé': return jsonify({'error': 'Déjà validé'}), 400
             
             mouvement.statut_validation = 'Validé'
             mouvement.validateur_id = request.current_user.id
             mouvement.date_validation = datetime.utcnow()
             
-            # Mise à jour du CMUP et des stocks MAINTENANT
             article = db.session.get(Article, mouvement.article_id)
             stock = db.session.get(Stock, mouvement.stock_id)
             
-            if mouvement.entree and mouvement.entree > 0 and article:
-                article.recalculer_cmup()
-            
+            if mouvement.entree and mouvement.entree > 0 and article: article.recalculer_cmup()
             if stock:
                 stock.recalculer_stock()
                 stock.recalculer_prix_stock()
@@ -837,27 +802,20 @@ def create_app(config_name=None):
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
-    # ==================================================================
-    # NOUVELLE ROUTE : Saisie groupée de mouvements
-    # ==================================================================
-
     @app.route('/api/mouvements/batch', methods=['POST', 'OPTIONS'])
     @token_required
     def create_mouvements_batch():
-        """Crée plusieurs mouvements pour une même pièce justificative"""
         if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
         try:
             data = request.json
-            if not data or not data.get('mouvements'):
-                return jsonify({'error': 'Aucun mouvement fourni'}), 400
+            if not data or not data.get('mouvements'): return jsonify({'error': 'Aucun mouvement fourni'}), 400
             
             numero_piece = data.get('numero_bs_br_cj', '')
             date_mouvement = data.get('date')
             fichier_pj = data.get('fichier_pj', None)
             commentaire_global = data.get('commentaire', '')
             
-            if not date_mouvement:
-                return jsonify({'error': 'Date requise'}), 400
+            if not date_mouvement: return jsonify({'error': 'Date requise'}), 400
             
             try:
                 date_obj = datetime.fromisoformat(date_mouvement.replace('Z', '+00:00')).date() if 'T' in date_mouvement else datetime.strptime(date_mouvement, '%Y-%m-%d').date()
@@ -870,50 +828,29 @@ def create_app(config_name=None):
             for idx, mvt in enumerate(data['mouvements']):
                 try:
                     if not mvt.get('stock_id') or not mvt.get('article_id'):
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'stock_id et article_id requis'})
-                        continue
+                        erreurs.append({'ligne': idx + 1, 'erreur': 'stock_id et article_id requis'}); continue
                     
                     stock = db.session.get(Stock, mvt['stock_id'])
-                    if not stock:
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'Stock introuvable'})
-                        continue
-                    if stock.statut_validation != 'Validé':
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'Le stock doit être validé'})
-                        continue
+                    if not stock: erreurs.append({'ligne': idx + 1, 'erreur': 'Stock introuvable'}); continue
+                    if stock.statut_validation != 'Validé': erreurs.append({'ligne': idx + 1, 'erreur': 'Le stock doit être validé'}); continue
                     
                     entree = float(mvt.get('entree', 0))
                     sortie = float(mvt.get('sortie', 0))
-                    
-                    if entree == 0 and sortie == 0:
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'Entrée ou sortie requise'})
-                        continue
-                    if entree > 0 and sortie > 0:
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'Entrée OU sortie, pas les deux'})
-                        continue
+                    if entree == 0 and sortie == 0: erreurs.append({'ligne': idx + 1, 'erreur': 'Entrée ou sortie requise'}); continue
+                    if entree > 0 and sortie > 0: erreurs.append({'ligne': idx + 1, 'erreur': 'Entrée OU sortie, pas les deux'}); continue
                     
                     prix_unitaire = float(mvt.get('prix_unitaire', 0))
-                    if prix_unitaire <= 0:
-                        erreurs.append({'ligne': idx + 1, 'erreur': 'Prix unitaire requis'})
-                        continue
-                    
-                    if sortie > 0 and sortie > stock.quantite_finale:
-                        erreurs.append({'ligne': idx + 1, 'erreur': f'Stock insuffisant (dispo: {stock.quantite_finale})'})
-                        continue
+                    if prix_unitaire <= 0: erreurs.append({'ligne': idx + 1, 'erreur': 'Prix unitaire requis'}); continue
+                    if sortie > 0 and sortie > stock.quantite_finale: erreurs.append({'ligne': idx + 1, 'erreur': f'Stock insuffisant (dispo: {stock.quantite_finale})'}); continue
                     
                     mouvement = Mouvement(
-                        date=date_obj,
-                        numero_bs_br_cj=numero_piece,
+                        date=date_obj, numero_bs_br_cj=numero_piece,
                         chantier_id=mvt.get('chantier_id') or stock.chantier_id,
-                        stock_id=mvt['stock_id'],
-                        article_id=mvt['article_id'],
-                        entree=entree if entree > 0 else None,
-                        sortie=sortie if sortie > 0 else None,
-                        prix_unitaire=prix_unitaire,
-                        type_mouvement='ENTREE' if entree > 0 else 'SORTIE',
-                        utilisateur=get_current_user(),
-                        commentaire=commentaire_global,
-                        fichier_pj=fichier_pj,
-                        statut_validation='Brouillon'
+                        stock_id=mvt['stock_id'], article_id=mvt['article_id'],
+                        entree=entree if entree > 0 else None, sortie=sortie if sortie > 0 else None,
+                        prix_unitaire=prix_unitaire, type_mouvement='ENTREE' if entree > 0 else 'SORTIE',
+                        utilisateur=get_current_user(), commentaire=commentaire_global,
+                        fichier_pj=fichier_pj, statut_validation='Brouillon'
                     )
                     db.session.add(mouvement)
                     created.append(mouvement)
@@ -926,18 +863,13 @@ def create_app(config_name=None):
                     log_audit(get_current_user(), 'CREATE', 'mouvements', mvt.id, new_values=mvt.to_dict(include_relations=False), ip_address=get_client_ip())
                 db.session.commit()
             
-            return jsonify({
-                'total': len(data['mouvements']),
-                'crees': len(created),
-                'erreurs': erreurs,
-                'mouvements': [m.to_dict() for m in created]
-            }), 200
+            return jsonify({'total': len(data['mouvements']), 'crees': len(created), 'erreurs': erreurs, 'mouvements': [m.to_dict() for m in created]}), 200
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
     # ==================================================================
-    # ROUTES EXPORT EXCEL
+    # ROUTES EXPORT
     # ==================================================================
 
     @app.route('/api/stocks/export', methods=['GET', 'OPTIONS'])
@@ -984,8 +916,7 @@ def create_app(config_name=None):
                     m.numero_bs_br_cj or '', m.chantier.code if m.chantier else '', m.chantier.nom if m.chantier else '',
                     m.stock.numero_fiche if m.stock else '', m.article.reference_interne if m.article else '', m.article.nom if m.article else '',
                     m.type_mouvement or '', _num(m.entree), _num(m.sortie), _num(m.prix_unitaire),
-                    m.statut_validation or '', m.fichier_pj or '',
-                    m.utilisateur or '', m.commentaire or '',
+                    m.statut_validation or '', m.fichier_pj or '', m.utilisateur or '', m.commentaire or '',
                     m.created_at.strftime('%d/%m/%Y %H:%M') if m.created_at else ''
                 ])
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -994,7 +925,7 @@ def create_app(config_name=None):
             return jsonify({'error': str(e)}), 500
 
     # ==================================================================
-    # ROUTES IMPORT CSV (STOCKS)
+    # ROUTES IMPORT CSV
     # ==================================================================
 
     @app.route('/api/stocks/import', methods=['POST', 'OPTIONS'])
@@ -1042,7 +973,6 @@ def create_app(config_name=None):
 
                 try: quantite_initiale = float(quantite_raw)
                 except (TypeError, ValueError): quantite_initiale = None
-                
                 try: prix_initial = float(prix_raw)
                 except (TypeError, ValueError): prix_initial = None
 
@@ -1067,18 +997,13 @@ def create_app(config_name=None):
                 prix_total = round(quantite_initiale * prix_initial, 2)
 
                 stock = Stock(
-                    numero_fiche=numero_fiche,
-                    reference_odoo=r.get('reference_odoo', '') or '',
-                    chantier_id=chantier.id,
-                    article_id=article.id,
+                    numero_fiche=numero_fiche, reference_odoo=r.get('reference_odoo', '') or '',
+                    chantier_id=chantier.id, article_id=article.id,
                     unite=unite or article.unite_mesure or 'unité',
-                    quantite_initiale=quantite_initiale,
-                    entree=0.0, sortie=0.0,
-                    quantite_finale=quantite_initiale,
-                    prix_unitaire=prix_initial,
-                    prix_total=prix_total,
-                    statut=compute_stock_statut(quantite_initiale),
-                    statut_validation='Brouillon'  # ✅ Import = brouillon
+                    quantite_initiale=quantite_initiale, entree=0.0, sortie=0.0,
+                    quantite_finale=quantite_initiale, prix_unitaire=prix_initial,
+                    prix_total=prix_total, statut=compute_stock_statut(quantite_initiale),
+                    statut_validation='Brouillon'
                 )
                 created.append(stock)
                 seen_fiches.add(numero_fiche)
@@ -1086,12 +1011,10 @@ def create_app(config_name=None):
             if created:
                 db.session.add_all(created)
                 db.session.flush()
-                # ✅ Plus de recalcul CMUP immédiat
                 db.session.commit()
 
             log_audit(get_current_user(), 'IMPORT', 'stocks', 0, new_values={'total': len(rows), 'importes': len(created), 'ignores': len(erreurs)}, ip_address=get_client_ip())
             db.session.commit()
-
             return jsonify({'total': len(rows), 'importes': len(created), 'ignores': len(erreurs), 'erreurs': erreurs}), 200
         except Exception as e:
             db.session.rollback()
@@ -1110,20 +1033,13 @@ def create_app(config_name=None):
             mouvement_stats = get_mouvement_statistics()
             nb_articles = Article.query.count()
             nb_chantiers = Chantier.query.filter_by(statut='Actif').count()
-            
-            # ✅ NOUVEAU : Compteurs de validation
             stocks_brouillon = Stock.query.filter_by(statut_validation='Brouillon').count()
             mouvements_brouillon = Mouvement.query.filter_by(statut_validation='Brouillon').count()
             
             return jsonify({
-                'nb_articles': nb_articles, 
-                'nb_chantiers': nb_chantiers, 
-                'stock': stock_stats, 
-                'mouvements': mouvement_stats,
-                'validation': {
-                    'stocks_brouillon': stocks_brouillon,
-                    'mouvements_brouillon': mouvements_brouillon
-                }
+                'nb_articles': nb_articles, 'nb_chantiers': nb_chantiers, 
+                'stock': stock_stats, 'mouvements': mouvement_stats,
+                'validation': {'stocks_brouillon': stocks_brouillon, 'mouvements_brouillon': mouvements_brouillon}
             }), 200
         except Exception as e: return jsonify({'error': str(e)}), 500
     
@@ -1255,7 +1171,260 @@ def create_app(config_name=None):
         except Exception as e: return jsonify({'error': str(e)}), 500
 
     # ==================================================================
-    # ROUTE HEALTH
+    # ROUTES VALORISATION MENSUELLE (Logique par flux)
+    # ==================================================================
+
+    @app.route('/api/valorisation/mensuelle', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def valorisation_mensuelle():
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            year = request.args.get('year', datetime.now().year, type=int)
+            if year < 2000 or year > 2100: return jsonify({'error': 'Année invalide'}), 400
+            
+            resultats = []
+            for mois in range(1, 13):
+                debut_mois = date(year, mois, 1)
+                if mois == 12:
+                    fin_mois = date(year, 12, 31)
+                else:
+                    fin_mois = date(year, mois + 1, 1) - timedelta(days=1)
+                
+                mouvements_mois = Mouvement.query.filter(
+                    Mouvement.statut_validation == 'Validé',
+                    Mouvement.date >= debut_mois,
+                    Mouvement.date <= fin_mois
+                ).all()
+                
+                valeur_entrees = sum(float(m.entree or 0) * float(m.prix_unitaire or 0) for m in mouvements_mois if m.entree)
+                valeur_sorties = sum(float(m.sortie or 0) * float(m.prix_unitaire or 0) for m in mouvements_mois if m.sortie)
+                
+                qte_entrees = sum(float(m.entree or 0) for m in mouvements_mois if m.entree)
+                qte_sorties = sum(float(m.sortie or 0) for m in mouvements_mois if m.sortie)
+                
+                nb_articles = len(set(m.article_id for m in mouvements_mois))
+                nb_mvts = len(mouvements_mois)
+                
+                resultats.append({
+                    'mois': mois, 'label': debut_mois.strftime('%B %Y'), 'date_fin': fin_mois.isoformat(),
+                    'qte_entrees': round(qte_entrees, 2), 'valeur_entrees': round(valeur_entrees, 2),
+                    'qte_sorties': round(qte_sorties, 2), 'valeur_sorties': round(valeur_sorties, 2),
+                    'nb_articles': nb_articles, 'nb_mouvements': nb_mvts
+                })
+            
+            return jsonify({'year': year, 'mois': resultats}), 200
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/valorisation/mensuelle/<int:year>/<int:mois>', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def valorisation_mensuelle_detail(year, mois):
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            if not (1 <= mois <= 12): return jsonify({'error': 'Mois invalide'}), 400
+            if year < 2000 or year > 2100: return jsonify({'error': 'Année invalide'}), 400
+            
+            debut_mois = date(year, mois, 1)
+            if mois == 12: fin_mois = date(year, 12, 31)
+            else: fin_mois = date(year, mois + 1, 1) - timedelta(days=1)
+            
+            mouvements = Mouvement.query.filter(
+                Mouvement.statut_validation == 'Validé',
+                Mouvement.date >= debut_mois,
+                Mouvement.date <= fin_mois
+            ).all()
+            
+            detail = []
+            total_entrees = 0.0
+            total_sorties = 0.0
+            
+            for m in mouvements:
+                if m.entree:
+                    val = float(m.entree) * float(m.prix_unitaire or 0)
+                    total_entrees += val
+                    detail.append({
+                        'mouvement_id': m.id, 'type': 'ENTREE', 'numero_piece': m.numero_bs_br_cj or '',
+                        'article_ref': m.article.reference_interne if m.article else '', 'article_nom': m.article.nom if m.article else '',
+                        'chantier_code': m.chantier.code if m.chantier else '', 'chantier_nom': m.chantier.nom if m.chantier else '',
+                        'quantite': float(m.entree), 'prix_unitaire': float(m.prix_unitaire or 0), 'valeur': round(val, 2)
+                    })
+                elif m.sortie:
+                    val = float(m.sortie) * float(m.prix_unitaire or 0)
+                    total_sorties += val
+                    detail.append({
+                        'mouvement_id': m.id, 'type': 'SORTIE', 'numero_piece': m.numero_bs_br_cj or '',
+                        'article_ref': m.article.reference_interne if m.article else '', 'article_nom': m.article.nom if m.article else '',
+                        'chantier_code': m.chantier.code if m.chantier else '', 'chantier_nom': m.chantier.nom if m.chantier else '',
+                        'quantite': float(m.sortie), 'prix_unitaire': float(m.prix_unitaire or 0), 'valeur': round(val, 2)
+                    })
+            
+            detail.sort(key=lambda x: x['valeur'], reverse=True)
+            
+            return jsonify({
+                'year': year, 'mois': mois, 'date_debut': debut_mois.isoformat(), 'date_fin': fin_mois.isoformat(),
+                'total_entrees': round(total_entrees, 2), 'total_sorties': round(total_sorties, 2), 'detail': detail
+            }), 200
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/valorisation/mensuelle/export', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def export_valorisation_mensuelle():
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            year = request.args.get('year', datetime.now().year, type=int)
+            mois = request.args.get('mois', datetime.now().month, type=int)
+            if not (1 <= mois <= 12): return jsonify({'error': 'Mois invalide'}), 400
+            if year < 2000 or year > 2100: return jsonify({'error': 'Année invalide'}), 400
+            
+            debut_mois = date(year, mois, 1)
+            if mois == 12: fin_mois = date(year, 12, 31)
+            else: fin_mois = date(year, mois + 1, 1) - timedelta(days=1)
+            
+            mouvements = Mouvement.query.filter(
+                Mouvement.statut_validation == 'Validé',
+                Mouvement.date >= debut_mois,
+                Mouvement.date <= fin_mois
+            ).all()
+            
+            rows = []
+            for m in mouvements:
+                qte = m.entree if m.entree else m.sortie
+                type_mvt = 'Entrée' if m.entree else 'Sortie'
+                val = float(qte or 0) * float(m.prix_unitaire or 0)
+                
+                rows.append([
+                    m.date.strftime('%d/%m/%Y') if m.date else '', type_mvt, m.numero_bs_br_cj or '',
+                    m.article.reference_interne if m.article else '', m.article.nom if m.article else '',
+                    m.chantier.code if m.chantier else '', m.chantier.nom if m.chantier else '',
+                    round(float(qte or 0), 2), round(float(m.prix_unitaire or 0), 2), round(val, 2)
+                ])
+            
+            rows.sort(key=lambda x: x[9], reverse=True)
+            
+            headers = ['Date', 'Type', 'N° Pièce', 'Réf. Article', 'Article', 'Code Chantier', 'Chantier', 'Quantité', 'Prix Unitaire', 'Valeur (MGA)']
+            sheet_name = f'Valorisation_{year}_{mois:02d}'
+            filename = f'valorisation_{year}_{mois:02d}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+            return export_response(headers, rows, sheet_name, filename)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    # ==================================================================
+    # ROUTES COUT PAR CHANTIER (Point 3)
+    # ==================================================================
+
+    @app.route('/api/couts/chantiers', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def couts_chantiers():
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            # On prend toutes les sorties validées
+            query = db.session.query(
+                Chantier.id, Chantier.code, Chantier.nom,
+                func.sum(Mouvement.sortie * Mouvement.prix_unitaire).label('total_cout'),
+                func.sum(Mouvement.sortie).label('total_qte')
+            ).join(Mouvement, Chantier.id == Mouvement.chantier_id)\
+             .filter(Mouvement.statut_validation == 'Validé', Mouvement.type_mouvement == 'SORTIE')\
+             .group_by(Chantier.id, Chantier.code, Chantier.nom)\
+             .order_by(func.sum(Mouvement.sortie * Mouvement.prix_unitaire).desc()).all()
+
+            resultats = []
+            for row in query:
+                resultats.append({
+                    'id': row.id,
+                    'code': row.code,
+                    'nom': row.nom,
+                    'total_qte_sortie': float(row.total_qte or 0),
+                    'total_cout': float(row.total_cout or 0)
+                })
+            
+            return jsonify(resultats), 200
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/couts/chantiers/<int:chantier_id>', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def cout_detail_chantier(chantier_id):
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            chantier = db.session.get(Chantier, chantier_id)
+            if not chantier: return jsonify({'error': 'Chantier introuvable'}), 404
+
+            # Détail par article
+            query = db.session.query(
+                Article.reference_interne, Article.nom,
+                func.sum(Mouvement.sortie).label('total_qte'),
+                func.sum(Mouvement.sortie * Mouvement.prix_unitaire).label('total_cout')
+            ).join(Mouvement, Article.id == Mouvement.article_id)\
+             .filter(Mouvement.chantier_id == chantier_id, Mouvement.statut_validation == 'Validé', Mouvement.type_mouvement == 'SORTIE')\
+             .group_by(Article.id, Article.reference_interne, Article.nom)\
+             .order_by(func.sum(Mouvement.sortie * Mouvement.prix_unitaire).desc()).all()
+
+            detail = []
+            total_qte = 0.0
+            total_cout = 0.0
+            for row in query:
+                qte = float(row.total_qte or 0)
+                cout = float(row.total_cout or 0)
+                total_qte += qte
+                total_cout += cout
+                detail.append({
+                    'article_ref': row.reference_interne,
+                    'article_nom': row.nom,
+                    'total_qte': qte,
+                    'total_cout': cout
+                })
+
+            return jsonify({
+                'chantier_code': chantier.code,
+                'chantier_nom': chantier.nom,
+                'total_qte': round(total_qte, 2),
+                'total_cout': round(total_cout, 2),
+                'detail': detail
+            }), 200
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/couts/chantiers/export', methods=['GET', 'OPTIONS'])
+    @roles_required('admin', 'RespStock')
+    def export_couts_chantiers():
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        try:
+            query = db.session.query(
+                Chantier.code, Chantier.nom,
+                func.sum(Mouvement.sortie).label('total_qte'),
+                func.sum(Mouvement.sortie * Mouvement.prix_unitaire).label('total_cout')
+            ).join(Mouvement, Chantier.id == Mouvement.chantier_id)\
+             .filter(Mouvement.statut_validation == 'Validé', Mouvement.type_mouvement == 'SORTIE')\
+             .group_by(Chantier.id, Chantier.code, Chantier.nom)\
+             .order_by(func.sum(Mouvement.sortie * Mouvement.prix_unitaire).desc()).all()
+
+            rows = []
+            grand_total_qte = 0.0
+            grand_total_cout = 0.0
+            for row in query:
+                qte = float(row.total_qte or 0)
+                cout = float(row.total_cout or 0)
+                grand_total_qte += qte
+                grand_total_cout += cout
+                rows.append([row.code, row.nom, round(qte, 2), round(cout, 2)])
+            
+            rows.append(['', 'TOTAL GÉNÉRAL', round(grand_total_qte, 2), round(grand_total_cout, 2)])
+
+            headers = ['Code Chantier', 'Nom du Chantier', 'Quantité Sortie', 'Coût Total (MGA)']
+            filename = f'couts_chantiers_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+            return export_response(headers, rows, 'Coûts par Chantier', filename)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
+    # ==================================================================
+    # ROUTE HEALTH & DEBUG
     # ==================================================================
     
     @app.route('/api/health', methods=['GET', 'OPTIONS'])
@@ -1266,6 +1435,15 @@ def create_app(config_name=None):
             db.session.commit()
             return jsonify({'status': 'ok', 'database': 'connected'}), 200
         except Exception as e: return jsonify({'status': 'error', 'database': 'disconnected', 'error': str(e)}), 500
+
+    @app.route('/api/routes', methods=['GET', 'OPTIONS'])
+    def list_routes():
+        if request.method == 'OPTIONS': return jsonify({'status': 'ok'}), 200
+        routes = []
+        for rule in app.url_map.iter_rules():
+            if rule.rule.startswith('/api/'):
+                routes.append({'path': rule.rule, 'methods': sorted(list(rule.methods - {'HEAD', 'OPTIONS'}))})
+        return jsonify(sorted(routes, key=lambda x: x['path'])), 200
 
     migrate = Migrate(app, db)
     return app
@@ -1281,6 +1459,13 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"❌ Erreur MySQL: {e}")
             exit(1)
+    
+    print("\n📋 Routes disponibles :")
+    with app.app_context():
+        for rule in app.url_map.iter_rules():
+            if rule.rule.startswith('/api/'):
+                methods = ', '.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))
+                print(f"   {methods:20} {rule.rule}")
     
     print("\n🚀 Serveur démarré sur http://0.0.0.0:5880")
     app.run(host='0.0.0.0', port=5880, debug=True)

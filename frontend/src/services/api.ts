@@ -1,6 +1,5 @@
 /**
  * Service API pour communiquer avec le backend Flask
- * ✅ Support de la validation, PJ et saisie groupée
  */
 import {
   Article,
@@ -17,7 +16,9 @@ import {
   MouvementBatchData,
   ChantierFormData,
   SearchFilters,
-  ProfileFormData
+  ProfileFormData,
+  ValorisationMensuelleResponse,
+  ValorisationDetailResponse
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5880/api';
@@ -326,7 +327,6 @@ export const stocksApi = {
     return handleResponse<{ message: string }>(response);
   },
 
-  // ✅ NOUVEAU : Validation
   validate: async (id: number): Promise<Stock> => {
     const response = await fetch(`${API_BASE_URL}/stocks/${id}/validate`, {
       method: 'PUT',
@@ -378,7 +378,6 @@ export const mouvementsApi = {
     return handleResponse<{ message: string }>(response);
   },
 
-  // ✅ NOUVEAU : Validation
   validate: async (id: number): Promise<Mouvement> => {
     const response = await fetch(`${API_BASE_URL}/mouvements/${id}/validate`, {
       method: 'PUT',
@@ -387,7 +386,6 @@ export const mouvementsApi = {
     return handleResponse<Mouvement>(response);
   },
 
-  // ✅ NOUVEAU : Saisie groupée
   createBatch: async (data: MouvementBatchData): Promise<{
     total: number;
     crees: number;
@@ -399,12 +397,7 @@ export const mouvementsApi = {
       headers: getHeaders(),
       body: JSON.stringify(data)
     });
-    return handleResponse<{
-      total: number;
-      crees: number;
-      erreurs: { ligne: number; erreur: string }[];
-      mouvements: Mouvement[];
-    }>(response);
+    return handleResponse<any>(response);
   }
 };
 
@@ -547,5 +540,31 @@ export const authApi = {
       body: JSON.stringify({ token })
     });
     return handleResponse<{ valid: boolean }>(response);
+  }
+};
+
+// ==================== VALORISATION MENSUELLE ====================
+
+export const valorisationApi = {
+  getMensuelle: async (year: number): Promise<ValorisationMensuelleResponse> => {
+    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle?year=${year}`, {
+      headers: getHeaders()
+    });
+    return handleResponse<ValorisationMensuelleResponse>(response);
+  },
+
+  getDetail: async (year: number, mois: number): Promise<ValorisationDetailResponse> => {
+    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle/${year}/${mois}`, {
+      headers: getHeaders()
+    });
+    return handleResponse<ValorisationDetailResponse>(response);
+  },
+
+  exportMois: async (year: number, mois: number): Promise<void> => {
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    return downloadFile(
+      `${API_BASE_URL}/valorisation/mensuelle/export?year=${year}&mois=${mois}`,
+      `valorisation_${year}_${String(mois).padStart(2, '0')}_${timestamp}`
+    );
   }
 };
