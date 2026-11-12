@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Stock, Article, Chantier, StockFormData } from '../types';
 import { stocksApi, articlesApi, chantiersApi, exportApi, importApi, uploadApi } from '../services/api';
-import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign, CheckCircle, FileText, Calendar, X } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign, CheckCircle, FileText, Calendar, X, Filter } from 'lucide-react';
 import SearchableSelectAPI from './SearchableSelectAPI';
 import SearchableSelect from './SearchableSelect';
 import useDebounce from '../hooks/useDebounce';
@@ -16,8 +16,25 @@ const StockComponent: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
   
+  // ✅ ÉTAT POUR LES FILTRES LOCAUX (ce que l'utilisateur tape)
+  const [localFilters, setLocalFilters] = useState({
+    search: '',
+    chantier_id: '' as number | '',
+    statut_validation: '',
+    date_debut: '',
+    date_fin: ''
+  });
+
+  // ✅ ÉTAT POUR LES FILTRES APPLIQUÉS (ce qui est envoyé au serveur)
+  const [appliedFilters, setAppliedFilters] = useState({
+    search: '',
+    chantier_id: '' as number | '',
+    statut_validation: '',
+    date_debut: '',
+    date_fin: ''
+  });
+
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -32,7 +49,6 @@ const StockComponent: React.FC = () => {
     unite: '',
     quantite_initiale: 0,
     prix_unitaire: 0,
-    // ✅ NOUVEAUX CHAMPS
     date_inventaire: new Date().toISOString().split('T')[0],
     reference_document: '',
     fichier_pj: '' as string | undefined,
@@ -49,11 +65,10 @@ const StockComponent: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pjInputRef = useRef<HTMLInputElement>(null);
 
-  const debouncedSearchTerm = useDebounce(searchTerm, 500);
-
+  // Chargement des données basé sur les filtres APPLIQUÉS
   useEffect(() => {
     loadStocks();
-  }, [currentPage, debouncedSearchTerm]);
+  }, [currentPage, appliedFilters]);
 
   useEffect(() => {
     loadChantiers();
@@ -63,7 +78,11 @@ const StockComponent: React.FC = () => {
     try {
       setLoading(true);
       const data = await stocksApi.getAll({
-        search: debouncedSearchTerm,
+        search: appliedFilters.search || undefined,
+        chantier_id: appliedFilters.chantier_id || undefined,
+        statut_validation: appliedFilters.statut_validation || undefined,
+        date_debut: appliedFilters.date_debut || undefined,
+        date_fin: appliedFilters.date_fin || undefined,
         page: currentPage,
         per_page: perPage
       });
@@ -87,6 +106,21 @@ const StockComponent: React.FC = () => {
     } catch (err) {
       console.error('❌ Erreur chargement chantiers:', err);
     }
+  };
+
+  // ✅ Appliquer les filtres
+  const handleApplyFilters = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentPage(1); // Retour à la page 1
+    setAppliedFilters(localFilters); // Copie les filtres locaux vers les filtres appliqués
+  };
+
+  // ✅ Réinitialiser les filtres
+  const handleResetFilters = () => {
+    const emptyFilters = { search: '', chantier_id: '' as number | '', statut_validation: '', date_debut: '', date_fin: '' };
+    setLocalFilters(emptyFilters);
+    setAppliedFilters(emptyFilters);
+    setCurrentPage(1);
   };
 
   const searchArticles = useCallback(async (searchTerm: string) => {
@@ -121,7 +155,6 @@ const StockComponent: React.FC = () => {
       sublabel: chantier.nom
     }));
 
-  // ✅ Gestion de l'upload de PJ
   const handlePjUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -167,7 +200,6 @@ const StockComponent: React.FC = () => {
         unite: formData.unite,
         quantite_initiale: formData.quantite_initiale,
         prix_unitaire: formData.prix_unitaire,
-        // ✅ NOUVEAUX CHAMPS
         date_inventaire: formData.date_inventaire || undefined,
         reference_document: formData.reference_document || undefined,
         fichier_pj: formData.fichier_pj || undefined,
@@ -243,7 +275,7 @@ const StockComponent: React.FC = () => {
     try {
       setExporting(true);
       setError(null);
-      await exportApi.stocks(debouncedSearchTerm);
+      await exportApi.stocks(appliedFilters.search);
       setSuccess('Export Excel généré avec succès');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
@@ -322,7 +354,7 @@ const StockComponent: React.FC = () => {
     catch { return dateStr; }
   };
 
-  if (loading) {
+  if (loading && stocks.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -372,13 +404,87 @@ const StockComponent: React.FC = () => {
         <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-sm text-green-600 font-medium">Validés</p><p className="text-2xl font-bold text-green-900">{stats.valide}</p></div>
       </div>
 
-      {/* Barre de recherche */}
-      <div className="flex items-center space-x-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-          <input type="text" placeholder="Rechercher un stock..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      {/* ✅ FORMULAIRE DE RECHERCHE ET FILTRES */}
+      <form onSubmit={handleApplyFilters} className="bg-white rounded-lg shadow p-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
+          
+          {/* Recherche globale */}
+          <div className="md:col-span-2 relative">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Recherche</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+              <input 
+                type="text" 
+                placeholder="Rechercher (N° fiche, article, etc.)..." 
+                value={localFilters.search} 
+                onChange={(e) => setLocalFilters({ ...localFilters, search: e.target.value })} 
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+              />
+            </div>
+          </div>
+
+          {/* Filtre Chantier */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Chantier</label>
+            <select
+              value={localFilters.chantier_id}
+              onChange={(e) => setLocalFilters({ ...localFilters, chantier_id: e.target.value ? Number(e.target.value) : '' })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Tous</option>
+              {chantiers.map(c => (
+                <option key={c.id} value={c.id}>{c.code}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filtre Statut */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Statut</label>
+            <select
+              value={localFilters.statut_validation}
+              onChange={(e) => setLocalFilters({ ...localFilters, statut_validation: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Tous</option>
+              <option value="Brouillon">Brouillon</option>
+              <option value="Validé">Validé</option>
+            </select>
+          </div>
+
+          {/* Filtres Date */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date début</label>
+            <input 
+              type="date" 
+              value={localFilters.date_debut} 
+              onChange={(e) => setLocalFilters({ ...localFilters, date_debut: e.target.value })} 
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date fin</label>
+            <input 
+              type="date" 
+              value={localFilters.date_fin} 
+              onChange={(e) => setLocalFilters({ ...localFilters, date_fin: e.target.value })} 
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+            />
+          </div>
+
+          {/* Boutons d'action */}
+          <div className="md:col-span-6 flex justify-end space-x-3 pt-2">
+            <button type="button" onClick={handleResetFilters} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 font-medium">
+              Réinitialiser
+            </button>
+            <button type="submit" className="btn btn-primary flex items-center space-x-2">
+              <Search size={18} />
+              <span>Rechercher</span>
+            </button>
+          </div>
+
         </div>
-      </div>
+      </form>
 
       {/* Liste des stocks */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -391,7 +497,11 @@ const StockComponent: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Réf. Doc</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chantier</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Article</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qté</th>
+                
+                {/* ✅ NOUVELLES COLONNES QUANTITÉ */}
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Initiale</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Finale</th>
+
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prix Total</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">État</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
@@ -401,7 +511,7 @@ const StockComponent: React.FC = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {stocks.length === 0 ? (
-                <tr><td colSpan={11} className="px-6 py-12 text-center"><Package className="mx-auto h-12 w-12 text-gray-400" /><p className="mt-2 text-sm text-gray-500">{searchTerm ? 'Aucun stock trouvé' : 'Aucun stock enregistré'}</p></td></tr>
+                <tr><td colSpan={12} className="px-6 py-12 text-center"><Package className="mx-auto h-12 w-12 text-gray-400" /><p className="mt-2 text-sm text-gray-500">{appliedFilters.search || appliedFilters.chantier_id || appliedFilters.statut_validation || appliedFilters.date_debut || appliedFilters.date_fin ? 'Aucun stock trouvé avec ces filtres' : 'Aucun stock enregistré'}</p></td></tr>
               ) : (
                 stocks.map((stock) => (
                   <tr key={stock.id} className="hover:bg-gray-50">
@@ -410,7 +520,11 @@ const StockComponent: React.FC = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{stock.reference_document || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{stock.chantier?.code || '-'}</td>
                     <td className="px-6 py-4 text-sm text-gray-900"><div><p className="font-medium">{stock.article?.reference_interne}</p><p className="text-gray-500">{stock.article?.nom}</p></div></td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{stock.quantite_finale} {stock.unite}</td>
+                    
+                    {/* ✅ AFFICHAGE DES QUANTITÉS */}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-600">{stock.quantite_initiale} {stock.unite}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">{stock.quantite_finale} {stock.unite}</td>
+
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatPrice(stock.prix_total || 0)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 text-xs font-semibold rounded-full ${stock.statut === 'Stock Normal' ? 'bg-green-100 text-green-800' : stock.statut === 'Approvisionnement nécessaire' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{stock.statut}</span>
@@ -479,7 +593,6 @@ const StockComponent: React.FC = () => {
                 </div>
               </div>
 
-              {/* ✅ NOUVEAUX CHAMPS */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -516,7 +629,6 @@ const StockComponent: React.FC = () => {
                 </div>
               </div>
 
-              {/* ✅ UPLOAD PJ */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   <FileText className="inline mr-1" size={16} />
@@ -524,12 +636,7 @@ const StockComponent: React.FC = () => {
                 </label>
                 <input ref={pjInputRef} type="file" onChange={handlePjUpload} className="hidden" />
                 <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => pjInputRef.current?.click()}
-                    disabled={uploadingPj}
-                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center space-x-2 disabled:opacity-50"
-                  >
+                  <button type="button" onClick={() => pjInputRef.current?.click()} disabled={uploadingPj} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center space-x-2 disabled:opacity-50">
                     <Upload size={16} />
                     <span>{uploadingPj ? 'Upload...' : 'Choisir un fichier'}</span>
                   </button>
@@ -537,11 +644,7 @@ const StockComponent: React.FC = () => {
                     <div className="flex items-center space-x-2 text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg">
                       <FileText size={16} />
                       <span className="truncate max-w-xs">{formData.fichier_pj}</span>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, fichier_pj: undefined })}
-                        className="text-red-600 hover:text-red-900"
-                      >
+                      <button type="button" onClick={() => setFormData({ ...formData, fichier_pj: undefined })} className="text-red-600 hover:text-red-900">
                         <X size={16} />
                       </button>
                     </div>

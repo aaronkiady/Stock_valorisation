@@ -122,6 +122,7 @@ class Chantier(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(50), unique=True, nullable=False, index=True)
     nom = db.Column(db.String(255), nullable=False)
+    client = db.Column(db.String(255), nullable=True)
     statut = db.Column(db.String(20), default='Actif')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -134,6 +135,7 @@ class Chantier(db.Model):
             'id': self.id,
             'code': self.code,
             'nom': self.nom,
+            'client': self.client,
             'statut': self.statut,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

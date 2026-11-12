@@ -2,28 +2,20 @@
  * Service API pour communiquer avec le backend Flask
  */
 import {
-  Article,
-  Chantier,
-  Stock,
-  Mouvement,
-  AuditLog,
-  DashboardStats,
-  StockParChantier,
-  PaginatedResponse,
-  ArticleFormData,
-  StockFormData,
-  MouvementFormData,
-  MouvementBatchData,
-  ChantierFormData,
-  SearchFilters,
-  ProfileFormData,
-  ValorisationMensuelleResponse,
-  ValorisationDetailResponse
+  Article, Chantier, Stock, Mouvement, AuditLog, DashboardStats,
+  StockParChantier, PaginatedResponse, ArticleFormData, StockFormData,
+  MouvementFormData, MouvementBatchData, ChantierFormData, SearchFilters,
+  ProfileFormData, ValorisationMensuelleResponse, ValorisationDetailResponse
 } from '../types';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5880/api';
+const getApiBaseUrl = (): string => {
+  if (process.env.REACT_APP_API_URL) return process.env.REACT_APP_API_URL;
+  const { hostname } = window.location;
+  return `http://${hostname}:5880/api`;
+};
 
-// Helper pour les headers avec authentification
+const API_BASE_URL = getApiBaseUrl();
+
 const getHeaders = (): HeadersInit => {
   const token = localStorage.getItem('token');
   return {
@@ -32,7 +24,6 @@ const getHeaders = (): HeadersInit => {
   };
 };
 
-// Helper pour gérer les erreurs
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Une erreur est survenue' }));
@@ -41,21 +32,15 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   return response.json();
 };
 
-// Helper pour télécharger un fichier
 const downloadFile = async (url: string, baseFilename: string): Promise<void> => {
   const token = localStorage.getItem('token');
   const response = await fetch(url, {
-    headers: {
-      ...(token && { 'Authorization': `Bearer ${token}` })
-    }
+    headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }
   });
 
   if (!response.ok) {
     let message = 'Erreur lors de l\'export';
-    try {
-      const err = await response.json();
-      message = err.error || message;
-    } catch { /* réponse non-JSON */ }
+    try { const err = await response.json(); message = err.error || message; } catch { }
     throw new Error(message);
   }
 
@@ -83,9 +68,7 @@ export const uploadApi = {
 
     const response = await fetch(`${API_BASE_URL}/upload-pj`, {
       method: 'POST',
-      headers: {
-        ...(token && { 'Authorization': `Bearer ${token}` })
-      },
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
       body: formData
     });
     return handleResponse<{ filename: string; message: string }>(response);
@@ -94,9 +77,7 @@ export const uploadApi = {
   downloadPj: async (filename: string): Promise<void> => {
     const token = localStorage.getItem('token');
     const response = await fetch(`${API_BASE_URL}/download-pj/${encodeURIComponent(filename)}`, {
-      headers: {
-        ...(token && { 'Authorization': `Bearer ${token}` })
-      }
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }
     });
 
     if (!response.ok) throw new Error('Fichier introuvable');
@@ -124,8 +105,10 @@ export const exportApi = {
     return downloadFile(`${API_BASE_URL}/stocks/export${query}`, `stocks_${timestamp}`);
   },
 
+  // ✅ Ajout de 'search' dans les filtres
   mouvements: async (filters: SearchFilters = {}): Promise<void> => {
     const params = new URLSearchParams();
+    if (filters.search) params.append('search', filters.search);
     if (filters.chantier_id) params.append('chantier_id', filters.chantier_id.toString());
     if (filters.date_debut) params.append('date_debut', filters.date_debut);
     if (filters.date_fin) params.append('date_fin', filters.date_fin);
@@ -136,7 +119,7 @@ export const exportApi = {
   }
 };
 
-// ==================== IMPORT CSV (STOCKS) ====================
+// ==================== IMPORT CSV ====================
 
 export interface ImportReport {
   total: number;
@@ -153,9 +136,7 @@ export const importApi = {
 
     const response = await fetch(`${API_BASE_URL}/stocks/import`, {
       method: 'POST',
-      headers: {
-        ...(token && { 'Authorization': `Bearer ${token}` })
-      },
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
       body: formData
     });
     return handleResponse<ImportReport>(response);
@@ -171,12 +152,9 @@ export const articlesApi = {
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    const response = await fetch(`${API_BASE_URL}/articles?${params}`, {
-      headers: getHeaders()
-    });
-    
+    const response = await fetch(`${API_BASE_URL}/articles?${params}`, { headers: getHeaders() });
     const data = await handleResponse<any>(response);
-    
+
     if (Array.isArray(data)) {
       return { articles: data, items: data, total: data.length, pages: 1, current_page: 1 };
     } else if (data && typeof data === 'object') {
@@ -188,38 +166,22 @@ export const articlesApi = {
         current_page: data.current_page || 1
       };
     }
-    
     return { articles: [], items: [], total: 0, pages: 0, current_page: 1 };
   },
-
   getById: async (id: number): Promise<Article> => {
     const response = await fetch(`${API_BASE_URL}/articles/${id}`, { headers: getHeaders() });
     return handleResponse<Article>(response);
   },
-
   create: async (data: ArticleFormData): Promise<Article> => {
-    const response = await fetch(`${API_BASE_URL}/articles`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/articles`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Article>(response);
   },
-
   update: async (id: number, data: Partial<ArticleFormData>): Promise<Article> => {
-    const response = await fetch(`${API_BASE_URL}/articles/${id}`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/articles/${id}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Article>(response);
   },
-
   delete: async (id: number): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/articles/${id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/articles/${id}`, { method: 'DELETE', headers: getHeaders() });
     return handleResponse<{ message: string }>(response);
   }
 };
@@ -233,12 +195,9 @@ export const chantiersApi = {
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    const response = await fetch(`${API_BASE_URL}/chantiers?${params}`, {
-      headers: getHeaders()
-    });
-    
+    const response = await fetch(`${API_BASE_URL}/chantiers?${params}`, { headers: getHeaders() });
     const data = await handleResponse<any>(response);
-    
+
     if (Array.isArray(data)) return data;
     if (data && typeof data === 'object') {
       if (data.chantiers) return data.chantiers;
@@ -247,35 +206,20 @@ export const chantiersApi = {
     }
     return [];
   },
-
   getById: async (id: number): Promise<Chantier> => {
     const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, { headers: getHeaders() });
     return handleResponse<Chantier>(response);
   },
-
   create: async (data: ChantierFormData): Promise<Chantier> => {
-    const response = await fetch(`${API_BASE_URL}/chantiers`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/chantiers`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Chantier>(response);
   },
-
   update: async (id: number, data: Partial<ChantierFormData>): Promise<Chantier> => {
-    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Chantier>(response);
   },
-
   delete: async (id: number): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/chantiers/${id}`, { method: 'DELETE', headers: getHeaders() });
     return handleResponse<{ message: string }>(response);
   }
 };
@@ -283,55 +227,42 @@ export const chantiersApi = {
 // ==================== STOCKS ====================
 
 export const stocksApi = {
-  getAll: async (filters: SearchFilters = {}): Promise<PaginatedResponse<Stock>> => {
+    getAll: async (filters: SearchFilters = {}): Promise<PaginatedResponse<Stock>> => {
     const params = new URLSearchParams();
     if (filters.search) params.append('search', filters.search);
     if (filters.chantier_id) params.append('chantier_id', filters.chantier_id.toString());
+    if (filters.statut_validation) params.append('statut_validation', filters.statut_validation);
+    if (filters.date_debut) params.append('date_debut', filters.date_debut);
+    if (filters.date_fin) params.append('date_fin', filters.date_fin);
+    
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    const response = await fetch(`${API_BASE_URL}/stocks?${params}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks?${params}`, { headers: getHeaders() });
     return handleResponse<PaginatedResponse<Stock>>(response);
   },
-
   getById: async (id: number): Promise<Stock> => {
     const response = await fetch(`${API_BASE_URL}/stocks/${id}`, { headers: getHeaders() });
     return handleResponse<Stock>(response);
   },
-
+  find: async (chantier_id: number, article_id: number): Promise<Stock> => {
+    const response = await fetch(`${API_BASE_URL}/stocks/find?chantier_id=${chantier_id}&article_id=${article_id}`, { headers: getHeaders() });
+    return handleResponse<Stock>(response);
+  },
   create: async (data: StockFormData): Promise<Stock> => {
-    const response = await fetch(`${API_BASE_URL}/stocks`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Stock>(response);
   },
-
   update: async (id: number, data: Partial<StockFormData>): Promise<Stock> => {
-    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Stock>(response);
   },
-
   delete: async (id: number): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}`, { method: 'DELETE', headers: getHeaders() });
     return handleResponse<{ message: string }>(response);
   },
-
   validate: async (id: number): Promise<Stock> => {
-    const response = await fetch(`${API_BASE_URL}/stocks/${id}/validate`, {
-      method: 'PUT',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}/validate`, { method: 'PUT', headers: getHeaders() });
     return handleResponse<Stock>(response);
   }
 };
@@ -339,9 +270,10 @@ export const stocksApi = {
 // ==================== MOUVEMENTS ====================
 
 export const mouvementsApi = {
+  // ✅ Ajout de 'search' dans les filtres
   getAll: async (filters: SearchFilters = {}): Promise<PaginatedResponse<Mouvement>> => {
     const params = new URLSearchParams();
-    if (filters.stock_id) params.append('stock_id', filters.stock_id.toString());
+    if (filters.search) params.append('search', filters.search);
     if (filters.chantier_id) params.append('chantier_id', filters.chantier_id.toString());
     if (filters.type_mouvement) params.append('type_mouvement', filters.type_mouvement);
     if (filters.statut_validation) params.append('statut_validation', filters.statut_validation);
@@ -350,53 +282,43 @@ export const mouvementsApi = {
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    const response = await fetch(`${API_BASE_URL}/mouvements?${params}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/mouvements?${params}`, { headers: getHeaders() });
     return handleResponse<PaginatedResponse<Mouvement>>(response);
   },
-
   getById: async (id: number): Promise<Mouvement> => {
     const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { headers: getHeaders() });
     return handleResponse<Mouvement>(response);
   },
-
   create: async (data: MouvementFormData): Promise<Mouvement> => {
-    const response = await fetch(`${API_BASE_URL}/mouvements`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
+    const response = await fetch(`${API_BASE_URL}/mouvements`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
+    return handleResponse<Mouvement>(response);
+  },
+  update: async (id: number, data: Partial<MouvementFormData>): Promise<Mouvement> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { 
+      method: 'PUT', 
+      headers: getHeaders(), 
+      body: JSON.stringify(data) 
     });
     return handleResponse<Mouvement>(response);
   },
-
   delete: async (id: number): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { method: 'DELETE', headers: getHeaders() });
+    return handleResponse<{ message: string }>(response);
+  },
+  validate: async (id: number): Promise<Mouvement> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}/validate`, { method: 'PUT', headers: getHeaders() });
+    return handleResponse<Mouvement>(response);
+  },
+  validateBatch: async (numero_piece: string): Promise<{ message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/validate-batch`, { 
+      method: 'PUT', 
+      headers: getHeaders(),
+      body: JSON.stringify({ numero_piece })
     });
     return handleResponse<{ message: string }>(response);
   },
-
-  validate: async (id: number): Promise<Mouvement> => {
-    const response = await fetch(`${API_BASE_URL}/mouvements/${id}/validate`, {
-      method: 'PUT',
-      headers: getHeaders()
-    });
-    return handleResponse<Mouvement>(response);
-  },
-
-  createBatch: async (data: MouvementBatchData): Promise<{
-    total: number;
-    crees: number;
-    erreurs: { ligne: number; erreur: string }[];
-    mouvements: Mouvement[];
-  }> => {
-    const response = await fetch(`${API_BASE_URL}/mouvements/batch`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+  createBatch: async (data: MouvementBatchData): Promise<any> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/batch`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<any>(response);
   }
 };
@@ -412,9 +334,7 @@ export const auditApi = {
     if (filters.page) params.append('page', filters.page.toString());
     if (filters.per_page) params.append('per_page', filters.per_page.toString());
 
-    const response = await fetch(`${API_BASE_URL}/audit-logs?${params}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/audit-logs?${params}`, { headers: getHeaders() });
     return handleResponse<PaginatedResponse<AuditLog>>(response);
   }
 };
@@ -423,21 +343,16 @@ export const auditApi = {
 
 export const dashboardApi = {
   getStats: async (): Promise<DashboardStats> => {
-    const response = await fetch(`${API_BASE_URL}/dashboard/stats`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/dashboard/stats`, { headers: getHeaders() });
     return handleResponse<DashboardStats>(response);
   },
-
   getStockParChantier: async (): Promise<StockParChantier[]> => {
-    const response = await fetch(`${API_BASE_URL}/dashboard/stock-par-chantier`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/dashboard/stock-par-chantier`, { headers: getHeaders() });
     return handleResponse<StockParChantier[]>(response);
   }
 };
 
-// ==================== UTILISATEURS (ADMIN) ====================
+// ==================== UTILISATEURS ====================
 
 export interface UserData {
   id: number;
@@ -453,30 +368,16 @@ export const usersApi = {
     const response = await fetch(`${API_BASE_URL}/users`, { headers: getHeaders() });
     return handleResponse<UserData[]>(response);
   },
-
   create: async (data: Partial<UserData> & { password: string }): Promise<UserData> => {
-    const response = await fetch(`${API_BASE_URL}/users`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/users`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<UserData>(response);
   },
-
   update: async (id: number, data: Partial<UserData>): Promise<UserData> => {
-    const response = await fetch(`${API_BASE_URL}/users/${id}`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/users/${id}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<UserData>(response);
   },
-
   delete: async (id: number): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/users/${id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/users/${id}`, { method: 'DELETE', headers: getHeaders() });
     return handleResponse<{ message: string }>(response);
   }
 };
@@ -490,13 +391,7 @@ export interface LoginCredentials {
 
 export interface AuthResponse {
   token: string;
-  user: {
-    id: number;
-    username: string;
-    email: string;
-    full_name: string;
-    role: 'admin' | 'RespStock' | 'user';
-  };
+  user: { id: number; username: string; email: string; full_name: string; role: 'admin' | 'RespStock' | 'user'; };
 }
 
 export const profileApi = {
@@ -504,41 +399,23 @@ export const profileApi = {
     const response = await fetch(`${API_BASE_URL}/profile`, { headers: getHeaders() });
     return handleResponse<UserData>(response);
   },
-
   update: async (data: Partial<ProfileFormData>): Promise<UserData> => {
-    const response = await fetch(`${API_BASE_URL}/profile`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(data)
-    });
+    const response = await fetch(`${API_BASE_URL}/profile`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<UserData>(response);
   }
 };
 
 export const authApi = {
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials)
-    });
+    const response = await fetch(`${API_BASE_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credentials) });
     return handleResponse<AuthResponse>(response);
   },
-
   logout: async (): Promise<{ message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/auth/logout`, {
-      method: 'POST',
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/auth/logout`, { method: 'POST', headers: getHeaders() });
     return handleResponse<{ message: string }>(response);
   },
-
   verifyToken: async (token: string): Promise<{ valid: boolean }> => {
-    const response = await fetch(`${API_BASE_URL}/auth/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token })
-    });
+    const response = await fetch(`${API_BASE_URL}/auth/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
     return handleResponse<{ valid: boolean }>(response);
   }
 };
@@ -547,24 +424,34 @@ export const authApi = {
 
 export const valorisationApi = {
   getMensuelle: async (year: number): Promise<ValorisationMensuelleResponse> => {
-    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle?year=${year}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle?year=${year}`, { headers: getHeaders() });
     return handleResponse<ValorisationMensuelleResponse>(response);
   },
-
   getDetail: async (year: number, mois: number): Promise<ValorisationDetailResponse> => {
-    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle/${year}/${mois}`, {
-      headers: getHeaders()
-    });
+    const response = await fetch(`${API_BASE_URL}/valorisation/mensuelle/${year}/${mois}`, { headers: getHeaders() });
     return handleResponse<ValorisationDetailResponse>(response);
   },
-
   exportMois: async (year: number, mois: number): Promise<void> => {
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    return downloadFile(
-      `${API_BASE_URL}/valorisation/mensuelle/export?year=${year}&mois=${mois}`,
-      `valorisation_${year}_${String(mois).padStart(2, '0')}_${timestamp}`
-    );
+    return downloadFile(`${API_BASE_URL}/valorisation/mensuelle/export?year=${year}&mois=${mois}`, `valorisation_${year}_${String(mois).padStart(2, '0')}_${timestamp}`);
+  }
+};
+
+// ==================== COUTS PAR CHANTIER ====================
+
+export const coutsApi = {
+  getChantiers: async (filtre_type?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (filtre_type) params.append('filtre_type', filtre_type);
+    const response = await fetch(`${API_BASE_URL}/couts/chantiers?${params}`, { headers: getHeaders() });
+    return handleResponse<any[]>(response);
+  },
+  getDetail: async (chantier_id: number): Promise<any> => {
+    const response = await fetch(`${API_BASE_URL}/couts/chantiers/${chantier_id}`, { headers: getHeaders() });
+    return handleResponse<any>(response);
+  },
+  export: async (): Promise<void> => {
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    return downloadFile(`${API_BASE_URL}/couts/chantiers/export`, `couts_chantiers_${timestamp}`);
   }
 };

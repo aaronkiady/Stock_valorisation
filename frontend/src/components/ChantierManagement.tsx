@@ -2,11 +2,12 @@
  * ChantierManagement - Gestion complète des chantiers
  * ✅ VERSION CORRIGÉE - Utilisation cohérente de l'API et recherche optimisée
  * ✅ Protection contre "chantiers.filter is not a function"
+ * ✅ AJOUT DU CHAMP CLIENT
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Chantier } from '../types';
 import { chantiersApi } from '../services/api';
-import { Building2, Plus, Edit2, Trash2, Search, AlertCircle, X } from 'lucide-react';
+import { Building2, Plus, Edit2, Trash2, Search, AlertCircle, X, User } from 'lucide-react';
 import useDebounce from '../hooks/useDebounce';
 
 const ChantierManagement: React.FC = () => {
@@ -23,53 +24,43 @@ const ChantierManagement: React.FC = () => {
   const [total, setTotal] = useState(0);
   const perPage = 20;
 
+  // ✅ AJOUT DU CHAMP CLIENT
   const [formData, setFormData] = useState({
     code: '',
     nom: '',
+    client: '', 
     statut: 'Actif' as 'Actif' | 'Inactif' | 'Clôturé'
   });
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // ✅ CORRECTION : Ajout du debounce pour la recherche (400ms)
   const debouncedSearchTerm = useDebounce(searchTerm, 400);
 
-  // ✅ CORRECTION : Utilisation de useCallback pour éviter les re-rendus inutiles
   const loadChantiers = useCallback(async (search: string = '', page: number = 1) => {
     try {
-      // Afficher le loading de recherche seulement si c'est une nouvelle recherche
       if (search !== '' || page !== currentPage) {
         setSearchLoading(true);
       }
       
-      setError(null); // Réinitialiser l'erreur
+      setError(null);
       
-      console.log(`🔍 Chargement chantiers - Page: ${page}, Recherche: "${search}"`);
-      
-      // ✅ CORRECTION CRITIQUE : Utiliser l'API chantiersApi au lieu de fetch direct
       const data = await chantiersApi.getAll({
         search: search,
         page: page,
         per_page: perPage
       });
       
-      // ✅ CORRECTION: Gestion correcte du type PaginatedResponse
       if (data && data.chantiers && Array.isArray(data.chantiers)) {
         setChantiers(data.chantiers);
         setTotalPages(data.pages || 1);
         setTotal(data.total || 0);
-        setCurrentPage(page); // ✅ Mettre à jour la page courante
-        
-        console.log(`✅ ${data.chantiers.length} chantiers chargés (total: ${data.total})`);
+        setCurrentPage(page);
       } else if (Array.isArray(data)) {
-        // Fallback si l'API retourne directement un tableau
         setChantiers(data);
         setTotal(data.length || 0);
         setTotalPages(1);
-        console.log(`✅ ${data.length} chantiers chargés`);
       } else {
-        // Format inattendu, utiliser un tableau vide
         console.error('Format de réponse inattendu:', data);
         setChantiers([]);
         setTotal(0);
@@ -80,7 +71,6 @@ const ChantierManagement: React.FC = () => {
     } catch (err) {
       console.error('Erreur lors du chargement des chantiers:', err);
       setError(err instanceof Error ? err.message : 'Erreur de chargement');
-      // ✅ CORRECTION CRITIQUE: Toujours garder chantiers comme tableau en cas d'erreur
       setChantiers([]);
       setTotal(0);
       setTotalPages(1);
@@ -90,31 +80,22 @@ const ChantierManagement: React.FC = () => {
     }
   }, [currentPage, perPage]);
 
-  // ✅ CORRECTION : Chargement initial et rechargement quand la recherche debounced change
   useEffect(() => {
     if (loading) {
-      // Chargement initial
       loadChantiers();
     } else {
-      // Recherche avec debounce - reset à la page 1
       loadChantiers(debouncedSearchTerm, 1);
     }
   }, [debouncedSearchTerm]);
 
-  // ✅ CORRECTION : Gestion optimisée de la recherche
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchTerm(value);
-    // Le reset de page se fait automatiquement dans loadChantiers
+    setSearchTerm(e.target.value);
   };
 
-  // ✅ CORRECTION : Reset de recherche optimisé
   const handleClearSearch = () => {
     setSearchTerm('');
-    // Pas besoin d'appeler loadChantiers ici, l'effet s'en chargera
   };
 
-  // ✅ CORRECTION : Gestion de la pagination améliorée
   const handlePageChange = (newPage: number) => {
     loadChantiers(debouncedSearchTerm, newPage);
   };
@@ -156,6 +137,7 @@ const ChantierManagement: React.FC = () => {
     setFormData({
       code: chantier.code,
       nom: chantier.nom,
+      client: chantier.client || '', // ✅ Récupération du client
       statut: chantier.statut
     });
     setEditingId(chantier.id);
@@ -180,6 +162,7 @@ const ChantierManagement: React.FC = () => {
     setFormData({
       code: '',
       nom: '',
+      client: '', // ✅ Reset du client
       statut: 'Actif'
     });
     setEditingId(null);
@@ -191,14 +174,12 @@ const ChantierManagement: React.FC = () => {
     setShowModal(true);
   };
 
-  // ✅ CORRECTION: Vérifier que chantiers est un tableau AVANT d'utiliser .filter()
   const stats = {
     total: total,
     actif: Array.isArray(chantiers) ? chantiers.filter(c => c.statut === 'Actif').length : 0,
     inactif: Array.isArray(chantiers) ? chantiers.filter(c => c.statut === 'Inactif').length : 0
   };
 
-  // ✅ CORRECTION : Affichage du loading seulement pour le chargement initial
   if (loading && chantiers.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -269,21 +250,19 @@ const ChantierManagement: React.FC = () => {
           <Search className="text-gray-400" size={20} />
           <input
             type="text"
-            placeholder="Rechercher un chantier (code, nom)..."
+            placeholder="Rechercher un chantier (code, nom, client)..."
             value={searchTerm}
             onChange={handleSearchChange}
             className="flex-1 px-3 py-2 border-0 focus:ring-0 focus:outline-none"
             disabled={searchLoading}
           />
           
-          {/* ✅ CORRECTION : Indicateur de recherche amélioré */}
           {searchLoading && (
             <div className="absolute right-10 top-1/2 transform -translate-y-1/2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
             </div>
           )}
           
-          {/* ✅ CORRECTION : Bouton de suppression de recherche */}
           {searchTerm && !searchLoading && (
             <button
               onClick={handleClearSearch}
@@ -296,7 +275,6 @@ const ChantierManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* ✅ CORRECTION : Indicateur de recherche globale */}
       {searchLoading && chantiers.length > 0 && (
         <div className="flex items-center justify-center py-4">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600 mr-2"></div>
@@ -316,6 +294,10 @@ const ChantierManagement: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Nom
                 </th>
+                {/* ✅ NOUVELLE COLONNE CLIENT */}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Client
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Statut
                 </th>
@@ -328,10 +310,9 @@ const ChantierManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {/* ✅ CORRECTION: Vérifier que chantiers est un tableau */}
               {!Array.isArray(chantiers) || chantiers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                     <Building2 className="mx-auto mb-2 text-gray-400" size={48} />
                     <p className="text-lg font-medium">
                       {!Array.isArray(chantiers) 
@@ -363,6 +344,10 @@ const ChantierManagement: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <span className="text-sm text-gray-900 font-medium">{chantier.nom}</span>
+                    </td>
+                    {/* ✅ AFFICHAGE DU CLIENT */}
+                    <td className="px-6 py-4">
+                      <span className="text-sm text-gray-600">{chantier.client || '-'}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
@@ -481,6 +466,20 @@ const ChantierManagement: React.FC = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="Ex: Construction Immeuble A"
                   required
+                />
+              </div>
+
+              {/* ✅ NOUVEAU CHAMP CLIENT */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Client
+                </label>
+                <input
+                  type="text"
+                  value={formData.client}
+                  onChange={(e) => setFormData({ ...formData, client: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="Ex: Société XYZ"
                 />
               </div>
 

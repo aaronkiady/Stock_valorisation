@@ -1,6 +1,5 @@
 /**
  * Types TypeScript pour l'application de gestion de stock
- * ✅ Ajout des champs de validation et PJ
  */
 
 // ==================== TYPES DE BASE ====================
@@ -28,6 +27,7 @@ export interface Chantier {
   id: number;
   code: string;
   nom: string;
+  client?: string;
   statut: 'Actif' | 'Inactif' | 'Clôturé';
   created_at?: string;
   date_creation?: string;
@@ -46,16 +46,12 @@ export interface Stock {
   created_at?: string;
   prix_unitaire?: number;
   prix_total?: number;
-  
-  // ✅ NOUVEAUX CHAMPS
   date_inventaire?: string;
   reference_document?: string;
   fichier_pj?: string;
   statut_validation: 'Brouillon' | 'Validé';
   date_validation?: string;
   validateur?: User;
-  
-  // Relations
   chantier?: Chantier;
   article?: Article;
 }
@@ -70,19 +66,15 @@ export interface Mouvement {
   entree?: number;
   sortie?: number;
   prix_unitaire?: number;
-  type_mouvement: 'ENTREE' | 'SORTIE';
+  type_mouvement: 'ENTREE' | 'SORTIE' | 'RESERVATION';
   commentaire?: string;
   created_at?: string;
   utilisateur?: string;
-  
-  // ✅ NOUVEAUX CHAMPS
   date_saisie?: string;
   fichier_pj?: string;
   statut_validation: 'Brouillon' | 'Validé';
   date_validation?: string;
   validateur?: User;
-  
-  // Relations
   chantier?: Chantier;
   stock?: Stock;
   article?: Article;
@@ -100,8 +92,6 @@ export interface AuditLog {
   timestamp: string;
 }
 
-// ==================== TYPES POUR LE DASHBOARD ====================
-
 export interface DashboardStats {
   nb_articles: number;
   nb_chantiers: number;
@@ -117,7 +107,6 @@ export interface DashboardStats {
     total_sorties: number;
     total_mouvements: number;
   };
-  // ✅ NOUVEAU
   validation?: {
     stocks_brouillon: number;
     mouvements_brouillon: number;
@@ -129,8 +118,6 @@ export interface StockParChantier {
   entrees: number;
   sorties: number;
 }
-
-// ==================== TYPES POUR LA PAGINATION ====================
 
 export interface PaginatedResponse<T> {
   data?: T[];
@@ -155,8 +142,6 @@ export interface ApiSuccess {
   message: string;
 }
 
-// ==================== TYPES POUR LES FORMULAIRES ====================
-
 export interface ArticleFormData {
   reference_interne: string;
   nom: string;
@@ -173,7 +158,6 @@ export interface StockFormData {
   unite?: string;
   quantite_initiale: number;
   prix_unitaire?: number;
-  // ✅ NOUVEAUX CHAMPS
   date_inventaire?: string;
   reference_document?: string;
   fichier_pj?: string;
@@ -183,24 +167,22 @@ export interface MouvementFormData {
   date: string;
   numero_bs_br_cj: string;
   chantier_id?: number;
-  stock_id: number;
+  stock_id?: number; // ✅ Optionnel
   article_id: number;
   entree?: number;
   sortie?: number;
   prix_unitaire?: number;
   commentaire?: string;
-  // ✅ NOUVEAUX CHAMPS
   fichier_pj?: string;
 }
 
-// ✅ NOUVEAU : Pour la saisie groupée
 export interface MouvementBatchData {
   date: string;
   numero_bs_br_cj: string;
   fichier_pj?: string;
   commentaire?: string;
   mouvements: {
-    stock_id: number;
+    stock_id?: number; // ✅ Optionnel
     article_id: number;
     chantier_id?: number;
     entree?: number;
@@ -212,10 +194,9 @@ export interface MouvementBatchData {
 export interface ChantierFormData {
   code: string;
   nom: string;
+  client?: string;
   statut: 'Actif' | 'Inactif' | 'Clôturé';
 }
-
-// ==================== TYPES POUR LES FILTRES ====================
 
 export interface SearchFilters {
   search?: string;
@@ -226,7 +207,7 @@ export interface SearchFilters {
   article_id?: number;
   date_debut?: string;
   date_fin?: string;
-  type_mouvement?: '' | 'ENTREE' | 'SORTIE';
+  type_mouvement?: '' | 'ENTREE' | 'SORTIE' | 'RESERVATION';
   utilisateur?: string;
   table_name?: string;
   action?: string;
@@ -237,8 +218,6 @@ export interface SearchFilters {
 export interface FormErrors {
   [key: string]: string;
 }
-
-// ==================== TYPES POUR L'AUTHENTIFICATION ====================
 
 export interface LoginCredentials {
   username: string;
@@ -256,8 +235,6 @@ export interface AuthState {
   isAuthenticated: boolean;
 }
 
-// ==================== TYPES POUR LE PROFIL ====================
-
 export interface ProfileFormData {
   username?: string;
   email?: string;
@@ -266,8 +243,8 @@ export interface ProfileFormData {
   confirm_password?: string;
 }
 
-// ==================== TYPES POUR LA VALORISATION MENSUELLE ====================
-// Remplace l'ancienne interface ValorisationMois par celle-ci :
+// ==================== VALORISATION MENSUELLE ====================
+
 export interface ValorisationMois {
   mois: number;
   label: string;
@@ -280,7 +257,11 @@ export interface ValorisationMois {
   nb_mouvements: number;
 }
 
-// Remplace l'ancienne interface ValorisationDetailLigne par celle-ci :
+export interface ValorisationMensuelleResponse {
+  year: number;
+  mois: ValorisationMois[];
+}
+
 export interface ValorisationDetailLigne {
   mouvement_id: number;
   type: 'ENTREE' | 'SORTIE';
@@ -294,7 +275,6 @@ export interface ValorisationDetailLigne {
   valeur: number;
 }
 
-// Remplace l'ancienne interface ValorisationDetailResponse par celle-ci :
 export interface ValorisationDetailResponse {
   year: number;
   mois: number;
@@ -303,9 +283,4 @@ export interface ValorisationDetailResponse {
   total_entrees: number;
   total_sorties: number;
   detail: ValorisationDetailLigne[];
-}
-
-export interface ValorisationMensuelleResponse {
-  year: number;
-  mois: ValorisationMois[];
 }
