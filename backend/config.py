@@ -18,7 +18,7 @@ class Config:
     MYSQL_PORT = 3306
     MYSQL_USER = 'root'
     MYSQL_PASSWORD = ''  # ⚠️ CHANGEZ CE MOT DE PASSE !
-    MYSQL_DATABASE = 'stock_test'
+    MYSQL_DATABASE = 'stock_final_test'
     
     # Construction de l'URI de connexion MySQL
     # Utilisation de mysqlclient (MySQLdb) qui est déjà installé
@@ -103,7 +103,7 @@ class TestingConfig(Config):
     """Configuration pour les tests"""
     TESTING = True
     DEBUG = True
-    MYSQL_DATABASE = 'stock_test'
+    MYSQL_DATABASE = 'stock_final_test'
 
 
 # ==================================================================

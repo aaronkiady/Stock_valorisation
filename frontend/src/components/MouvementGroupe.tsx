@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Chantier } from '../types';
 import { mouvementsApi, stocksApi, chantiersApi, articlesApi, uploadApi } from '../services/api';
-import { Plus, Trash2, Layers, AlertCircle, FileText, ArrowDownCircle, ArrowUpCircle, X, Save, Calendar } from 'lucide-react';
+import { Plus, Trash2, Layers, AlertCircle, FileText, ArrowDownCircle, ArrowUpCircle, X, Save, Calendar, Lock, Loader } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import SearchableSelectAPI from './SearchableSelectAPI';
 
@@ -12,34 +12,74 @@ interface LigneMouvement {
   id: string;
   article_id?: number;
   stock_id?: number;
-  type: 'ENTREE' | 'SORTIE';
   quantite: number;
   prix_unitaire: number;
+  unite: string;
 }
 
 const MouvementGroupe: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const pieceToEdit = searchParams.get('piece'); 
+  const isEditing = !!pieceToEdit;
+
   const [chantiers, setChantiers] = useState<Chantier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingEdit, setLoadingEdit] = useState(isEditing);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // ✅ NOUVEAU : Le chantier est maintenant un champ global
   const [chantierId, setChantierId] = useState<number | undefined>(undefined);
+  const [typeMouvement, setTypeMouvement] = useState<'ENTREE' | 'SORTIE' | 'RESERVATION'>('ENTREE');
 
   const [dateMouvement, setDateMouvement] = useState(new Date().toISOString().split('T')[0]);
-  const [numeroPiece, setNumeroPiece] = useState('');
+  const [numeroPiece, setNumeroPiece] = useState(pieceToEdit || '');
   const [fichierPj, setFichierPj] = useState<string | undefined>(undefined);
   const [commentaire, setCommentaire] = useState('');
   const [uploadingPj, setUploadingPj] = useState(false);
   const pjInputRef = React.useRef<HTMLInputElement>(null);
 
   const [lignes, setLignes] = useState<LigneMouvement[]>([{
-    id: generateId(), type: 'ENTREE', quantite: 0, prix_unitaire: 0
+    id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité'
   }]);
 
   useEffect(() => { loadChantiers(); }, []);
+
+  useEffect(() => {
+    if (isEditing && pieceToEdit && !loading) {
+      const loadEditData = async () => {
+        try {
+          setLoadingEdit(true);
+          const mvts = await mouvementsApi.getByPiece(pieceToEdit);
+          if (mvts.length > 0) {
+            const first = mvts[0];
+            setDateMouvement(first.date);
+            setNumeroPiece(first.numero_bs_br_cj);
+            setTypeMouvement(first.type_mouvement);
+            setChantierId(first.chantier_id);
+            setCommentaire(first.commentaire || '');
+            setFichierPj(first.fichier_pj || undefined);
+
+            const loadedLignes: LigneMouvement[] = mvts.map((m, idx) => ({
+              id: `edit-${idx}-${Date.now()}`,
+              article_id: m.article_id,
+              stock_id: m.stock_id,
+              quantite: m.entree || m.sortie || 0,
+              prix_unitaire: m.prix_unitaire || 0,
+              unite: m.article?.unite_mesure || 'unité'
+            }));
+            setLignes(loadedLignes);
+          }
+        } catch (err) {
+          setError("Impossible de charger les mouvements existants.");
+        } finally {
+          setLoadingEdit(false);
+        }
+      };
+      loadEditData();
+    }
+  }, [isEditing, pieceToEdit, loading]);
 
   const loadChantiers = async () => {
     try {
@@ -68,7 +108,7 @@ const MouvementGroupe: React.FC = () => {
   };
 
   const addLigne = () => {
-    setLignes([...lignes, { id: generateId(), type: 'ENTREE', quantite: 0, prix_unitaire: 0 }]);
+    setLignes([...lignes, { id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité' }]);
   };
 
   const removeLigne = (id: string) => {
@@ -80,40 +120,72 @@ const MouvementGroupe: React.FC = () => {
     setLignes(lignes.map(l => l.id === id ? { ...l, ...updates } : l));
   };
 
-  const handleArticleChange = async (ligneId: string, articleId: number, currentType: 'ENTREE'|'SORTIE') => {
-    if (!chantierId) {
+  const handleArticleChange = async (ligneId: string, articleId: number) => {
+    if (!chantierId && typeMouvement !== 'RESERVATION') {
       setError("Veuillez d'abord sélectionner un chantier dans les informations de la pièce.");
-      return;
-    }
-
-    if (currentType === 'ENTREE') {
-      updateLigne(ligneId, { article_id: articleId });
       return;
     }
     
     try {
-      const stock = await stocksApi.find(chantierId, articleId);
+      setError(null);
+      const article = await articlesApi.getById(articleId);
+      const uniteArticle = article.unite_mesure || 'unité';
+
+      let stockId: number | undefined = undefined;
+      let prixUnitaire: number = 0;
+
+      if (typeMouvement !== 'ENTREE') {
+        let idChantierSource = chantierId;
+        
+        if (typeMouvement === 'RESERVATION') {
+          const source = chantiers.find(c => c.code === 'O23005');
+          if (!source) {
+            setError("Le chantier source O23005 est introuvable.");
+            updateLigne(ligneId, { article_id: articleId, unite: uniteArticle });
+            return;
+          }
+          idChantierSource = source.id;
+        }
+
+        const stock = await stocksApi.find(idChantierSource!, articleId);
+        stockId = stock.id;
+        prixUnitaire = stock.article?.cout || 0;
+      }
+
       updateLigne(ligneId, { 
         article_id: articleId, 
-        stock_id: stock.id,
-        prix_unitaire: stock.article?.cout || 0 
+        unite: uniteArticle,
+        stock_id: stockId,
+        prix_unitaire: prixUnitaire
       });
-      setError(null);
+      
     } catch (err) {
       updateLigne(ligneId, { article_id: articleId, stock_id: undefined });
-      setError("Aucun stock validé trouvé pour ce chantier et cet article.");
+      setError(`Aucun stock validé trouvé pour cet article sur le chantier source (${typeMouvement === 'RESERVATION' ? 'O23005' : 'sélectionné'}).`);
     }
   };
 
+  // ✅ FILTRAGE DES ARTICLES DÉJÀ SÉLECTIONNÉS
   const searchArticles = useCallback(async (searchTerm: string) => {
     try {
       const data = await articlesApi.getAll({ search: searchTerm, per_page: 50 });
       const articles = data.articles || data.items || [];
-      return articles.map(article => ({
-        value: article.id, label: article.nom, sublabel: `${article.reference_interne} - CMUP: ${article.cout} MGA`
-      }));
+      
+      // On récupère tous les IDs d'articles déjà utilisés dans les autres lignes
+      const selectedIds = lignes
+        .map(l => l.article_id)
+        .filter((id): id is number => id !== undefined);
+
+      // On filtre les résultats de l'API pour retirer ceux déjà sélectionnés
+      return articles
+        .filter(article => !selectedIds.includes(article.id))
+        .map(article => ({
+          value: article.id, 
+          label: article.nom, 
+          sublabel: `${article.reference_interne} - CMUP: ${article.cout} MGA`
+        }));
     } catch (err) { return []; }
-  }, []);
+  }, [lignes]); // ✅ Dépendance à 'lignes' pour que le filtre soit à jour
 
   const getArticleLabel = useCallback(async (articleId: number) => {
     try {
@@ -135,37 +207,53 @@ const MouvementGroupe: React.FC = () => {
     if (!numeroPiece.trim()) { setError('N° de pièce (BS/BR/CJ) requis'); return; }
     if (lignes.length === 0) { setError('Ajoutez au moins une ligne'); return; }
 
+    // ✅ VÉRIFICATION SUPPLÉMENTAIRE DES DOUBLONS
+    const articleIds = lignes.map(l => l.article_id).filter(id => id !== undefined);
+    const hasDoublons = new Set(articleIds).size !== articleIds.length;
+    if (hasDoublons) {
+      setError("Vous avez sélectionné le même article plusieurs fois. Veuillez corriger les lignes.");
+      return;
+    }
+
     for (let i = 0; i < lignes.length; i++) {
       const l = lignes[i];
       if (!l.article_id) { setError(`Ligne ${i + 1} : article requis`); return; }
-      if (l.type === 'SORTIE' && !l.stock_id) { setError(`Ligne ${i + 1} : aucun stock trouvé pour cette sortie`); return; }
+      if (typeMouvement !== 'ENTREE' && !l.stock_id) { 
+        setError(`Ligne ${i + 1} : aucun stock trouvé pour cette ${typeMouvement.toLowerCase()}`); 
+        return; 
+      }
       if (l.quantite <= 0) { setError(`Ligne ${i + 1} : quantité > 0 requise`); return; }
-      if (l.type === 'ENTREE' && l.prix_unitaire <= 0) { setError(`Ligne ${i + 1} : prix unitaire > 0 requis`); return; }
+      if (typeMouvement === 'ENTREE' && l.prix_unitaire <= 0) { setError(`Ligne ${i + 1} : prix unitaire > 0 requis`); return; }
     }
 
     try {
       setSaving(true);
-      const result = await mouvementsApi.createBatch({
+      const payload = {
         date: dateMouvement,
         numero_bs_br_cj: numeroPiece,
         fichier_pj: fichierPj,
         commentaire: commentaire,
+        type_mouvement: typeMouvement,
         mouvements: lignes.map(l => ({
-          // ✅ On utilise le chantier global pour chaque ligne
           chantier_id: chantierId,
           article_id: l.article_id!,
-          entree: l.type === 'ENTREE' ? l.quantite : undefined,
-          sortie: l.type === 'SORTIE' ? l.quantite : undefined,
+          unite: l.unite,
+          entree: typeMouvement === 'ENTREE' ? l.quantite : undefined,
+          sortie: (typeMouvement === 'SORTIE' || typeMouvement === 'RESERVATION') ? l.quantite : undefined,
           prix_unitaire: l.prix_unitaire,
         }))
-      });
+      };
+
+      const result = isEditing 
+        ? await mouvementsApi.updateBatch(pieceToEdit!, payload)
+        : await mouvementsApi.createBatch(payload);
 
       if (result.erreurs && result.erreurs.length > 0) {
         const details = result.erreurs.map((e: { ligne: number; erreur: string }) => `Ligne ${e.ligne}: ${e.erreur}`).join(' | ');
         setError(`Certaines lignes ont échoué : ${details}`);
-        if (result.crees > 0) setSuccess(`${result.crees} mouvement(s) créé(s) sur ${result.total}`);
+        if (result.crees > 0) setSuccess(`${result.crees} mouvement(s) enregistré(s)`);
       } else {
-        setSuccess(`${result.crees} mouvement(s) créé(s) avec succès (en attente de validation)`);
+        setSuccess(`${result.crees} mouvement(s) enregistré(s) avec succès`);
         setTimeout(() => navigate('/mouvements'), 2000);
       }
     } catch (err) {
@@ -177,8 +265,13 @@ const MouvementGroupe: React.FC = () => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'MGA' }).format(price);
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
+  if (loading || loadingEdit) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        {loadingEdit && <p className="text-gray-500">Chargement des mouvements de la pièce...</p>}
+      </div>
+    );
   }
 
   return (
@@ -186,7 +279,8 @@ const MouvementGroupe: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-            <Layers className="mr-3" size={32} /> Saisie groupée de mouvements
+            <Layers className="mr-3" size={32} /> 
+            {isEditing ? 'Modifier la pièce justificative' : 'Saisie groupée de mouvements'}
           </h1>
           <p className="text-gray-600 mt-1">Une pièce justificative = plusieurs lignes d'articles</p>
         </div>
@@ -216,18 +310,18 @@ const MouvementGroupe: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">N° BS/BR/CJ <span className="text-red-500">*</span></label>
-              <input type="text" value={numeroPiece} onChange={(e) => setNumeroPiece(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: BS-2025-001" required />
+              <input type="text" value={numeroPiece} onChange={(e) => setNumeroPiece(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-100" placeholder="Ex: BS-2025-001" required readOnly={isEditing} />
             </div>
             
-            {/* ✅ NOUVEAU : Le chantier est ici, dans l'en-tête */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Chantier <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Chantier {typeMouvement === 'RESERVATION' ? '(Bénéficiaire)' : ''} <span className="text-red-500">*</span></label>
               <SearchableSelect
                 options={chantierOptions}
                 value={chantierId}
                 onChange={(v) => setChantierId(v as number)}
                 placeholder="Sélectionner le chantier..."
                 allowEmpty={false}
+                disabled={isEditing}
               />
             </div>
 
@@ -237,6 +331,24 @@ const MouvementGroupe: React.FC = () => {
               <button type="button" onClick={() => pjInputRef.current?.click()} disabled={uploadingPj} className="w-full px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center justify-center space-x-2 disabled:opacity-50">
                 <FileText size={16} /><span className="truncate">{uploadingPj ? 'Upload...' : fichierPj || 'Choisir un fichier'}</span>
               </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Type de mouvement de la pièce <span className="text-red-500">*</span></label>
+            <div className="flex space-x-4">
+              <label className={`flex items-center px-4 py-3 rounded-lg border-2 cursor-pointer transition-all ${typeMouvement === 'ENTREE' ? 'border-green-500 bg-green-50' : 'border-gray-300 hover:border-green-300'}`}>
+                <input type="radio" name="type_global" value="ENTREE" checked={typeMouvement === 'ENTREE'} onChange={() => setTypeMouvement('ENTREE')} className="mr-2" disabled={isEditing} />
+                <ArrowDownCircle className="mr-1 text-green-600" size={18} /><span className="font-medium text-green-700">Entrée</span>
+              </label>
+              <label className={`flex items-center px-4 py-3 rounded-lg border-2 cursor-pointer transition-all ${typeMouvement === 'SORTIE' ? 'border-red-500 bg-red-50' : 'border-gray-300 hover:border-red-300'}`}>
+                <input type="radio" name="type_global" value="SORTIE" checked={typeMouvement === 'SORTIE'} onChange={() => setTypeMouvement('SORTIE')} className="mr-2" disabled={isEditing} />
+                <ArrowUpCircle className="mr-1 text-red-600" size={18} /><span className="font-medium text-red-700">Sortie</span>
+              </label>
+              <label className={`flex items-center px-4 py-3 rounded-lg border-2 cursor-pointer transition-all ${typeMouvement === 'RESERVATION' ? 'border-orange-500 bg-orange-50' : 'border-gray-300 hover:border-orange-300'}`}>
+                <input type="radio" name="type_global" value="RESERVATION" checked={typeMouvement === 'RESERVATION'} onChange={() => setTypeMouvement('RESERVATION')} className="mr-2" disabled={isEditing} />
+                <Lock className="mr-1 text-orange-600" size={18} /><span className="font-medium text-orange-700">Réservation</span>
+              </label>
             </div>
           </div>
 
@@ -260,7 +372,7 @@ const MouvementGroupe: React.FC = () => {
                 <tr>
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-8">#</th>
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Article (Taper pour chercher)</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">Type</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">Unité</th>
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-28">Quantité</th>
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">Prix unit.</th>
                   <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase w-20">Action</th>
@@ -273,32 +385,23 @@ const MouvementGroupe: React.FC = () => {
                     <td className="px-3 py-2">
                       <SearchableSelectAPI
                         value={ligne.article_id}
-                        onChange={(v) => handleArticleChange(ligne.id, v as number, ligne.type)}
+                        onChange={(v) => handleArticleChange(ligne.id, v as number)}
                         searchFunction={searchArticles}
                         getSelectedLabel={getArticleLabel}
                         placeholder="Taper le nom..."
                         allowEmpty={false}
                         minChars={2}
-                        disabled={!chantierId} // ✅ Désactivé si pas de chantier
+                        disabled={!chantierId}
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex flex-col space-y-1">
-                        <label className="flex items-center text-xs cursor-pointer">
-                          <input type="radio" name={`type-${ligne.id}`} checked={ligne.type === 'ENTREE'} onChange={() => updateLigne(ligne.id, { type: 'ENTREE' })} className="mr-1" />
-                          <ArrowDownCircle className="text-green-600 mr-1" size={12} /> Entrée
-                        </label>
-                        <label className="flex items-center text-xs cursor-pointer">
-                          <input type="radio" name={`type-${ligne.id}`} checked={ligne.type === 'SORTIE'} onChange={() => updateLigne(ligne.id, { type: 'SORTIE' })} className="mr-1" />
-                          <ArrowUpCircle className="text-red-600 mr-1" size={12} /> Sortie
-                        </label>
-                      </div>
+                      <input type="text" value={ligne.unite} readOnly className="w-full px-2 py-1 border border-gray-200 rounded bg-gray-50 text-gray-700 text-sm" />
                     </td>
                     <td className="px-3 py-2">
-                      <input type="number" step="0.01" min="0.01" value={ligne.quantite || ''} onChange={(e) => updateLigne(ligne.id, { quantite: parseFloat(e.target.value) || 0 })} className={`w-full px-2 py-1 border-2 rounded focus:outline-none ${ligne.type === 'ENTREE' ? 'border-green-400' : 'border-red-400'}`} />
+                      <input type="number" step="0.01" min="0.01" value={ligne.quantite || ''} onChange={(e) => updateLigne(ligne.id, { quantite: parseFloat(e.target.value) || 0 })} className={`w-full px-2 py-1 border-2 rounded focus:outline-none ${typeMouvement === 'ENTREE' ? 'border-green-400' : typeMouvement === 'SORTIE' ? 'border-red-400' : 'border-orange-400'}`} />
                     </td>
                     <td className="px-3 py-2">
-                      <input type="number" step="0.01" min="0.01" value={ligne.prix_unitaire || ''} onChange={(e) => updateLigne(ligne.id, { prix_unitaire: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" disabled={ligne.type === 'SORTIE'} />
+                      <input type="number" step="0.01" min="0.01" value={ligne.prix_unitaire || ''} onChange={(e) => updateLigne(ligne.id, { prix_unitaire: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" disabled={typeMouvement !== 'ENTREE'} />
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button type="button" onClick={() => removeLigne(ligne.id)} className="text-red-600 hover:text-red-900" title="Supprimer la ligne"><Trash2 size={18} /></button>
@@ -311,20 +414,20 @@ const MouvementGroupe: React.FC = () => {
 
           <div className="bg-gray-50 px-4 py-3 border-t flex justify-end">
             <div className="text-sm text-gray-700">
-              <span className="font-medium">Total HT : </span>
-              <span className="font-bold text-gray-900">{formatPrice(lignes.reduce((sum, l) => sum + (l.type === 'ENTREE' ? l.quantite * l.prix_unitaire : 0), 0))}</span>
+              <span className="font-medium">Total HT (Entrées) : </span>
+              <span className="font-bold text-gray-900">{formatPrice(lignes.reduce((sum, l) => sum + (typeMouvement === 'ENTREE' ? l.quantite * l.prix_unitaire : 0), 0))}</span>
             </div>
           </div>
         </div>
 
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-          ⚠️ Les {lignes.length} mouvement(s) seront créés en <strong>Brouillon</strong>. Vous pourrez tous les valider d'un coup depuis la page Mouvements.
+          ⚠️ Les {lignes.length} mouvement(s) seront {isEditing ? 'mis à jour' : 'créés'} en <strong>Brouillon</strong>.
         </div>
 
         <div className="flex justify-end space-x-3">
           <button type="button" onClick={() => navigate('/mouvements')} className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Annuler</button>
           <button type="submit" disabled={saving || !chantierId} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 disabled:opacity-50">
-            <Save size={18} /><span>{saving ? 'Enregistrement...' : `Enregistrer ${lignes.length} mouvement(s)`}</span>
+            <Save size={18} /><span>{saving ? 'Enregistrement...' : (isEditing ? 'Mettre à jour la pièce' : `Enregistrer ${lignes.length} mouvement(s)`)}</span>
           </button>
         </div>
       </form>

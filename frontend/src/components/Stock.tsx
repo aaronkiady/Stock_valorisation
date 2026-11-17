@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Stock, Article, Chantier, StockFormData } from '../types';
 import { stocksApi, articlesApi, chantiersApi, exportApi, importApi, uploadApi } from '../services/api';
-import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign, CheckCircle, FileText, Calendar, X, Filter } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, AlertCircle, Package, Download, Upload, DollarSign, CheckCircle, FileText, Calendar, X, FilePlus, Hash, ClipboardList, Lock } from 'lucide-react';
 import SearchableSelectAPI from './SearchableSelectAPI';
 import SearchableSelect from './SearchableSelect';
 import useDebounce from '../hooks/useDebounce';
@@ -15,9 +15,15 @@ const StockComponent: React.FC = () => {
   const [chantiers, setChantiers] = useState<Chantier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showQuickModal, setShowQuickModal] = useState(false);
+  const [showInventaireModal, setShowInventaireModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  
-  // ✅ ÉTAT POUR LES FILTRES LOCAUX (ce que l'utilisateur tape)
+  const [inventaireStock, setInventaireStock] = useState<Stock | null>(null);
+
+  // ✅ État pour stocker la fiche existante détectée
+  const [existingStock, setExistingStock] = useState<Stock | null>(null);
+  const [checkingStock, setCheckingStock] = useState(false);
+
   const [localFilters, setLocalFilters] = useState({
     search: '',
     chantier_id: '' as number | '',
@@ -26,7 +32,6 @@ const StockComponent: React.FC = () => {
     date_fin: ''
   });
 
-  // ✅ ÉTAT POUR LES FILTRES APPLIQUÉS (ce qui est envoyé au serveur)
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     chantier_id: '' as number | '',
@@ -35,14 +40,12 @@ const StockComponent: React.FC = () => {
     date_fin: ''
   });
 
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const perPage = 20;
   
   const [formData, setFormData] = useState({
-    numero_fiche: 0,
     reference_odoo: '',
     chantier_id: undefined as number | undefined,
     article_id: undefined as number | undefined,
@@ -52,6 +55,18 @@ const StockComponent: React.FC = () => {
     date_inventaire: new Date().toISOString().split('T')[0],
     reference_document: '',
     fichier_pj: '' as string | undefined,
+  });
+
+  const [quickFormData, setQuickFormData] = useState({
+    chantier_id: undefined as number | undefined,
+    article_id: undefined as number | undefined,
+  });
+
+  const [inventaireFormData, setInventaireFormData] = useState({
+    quantite_comptee: 0,
+    prix_unitaire: 0,
+    date_inventaire: new Date().toISOString().split('T')[0],
+    commentaire: 'Inventaire physique',
   });
   
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +80,11 @@ const StockComponent: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pjInputRef = useRef<HTMLInputElement>(null);
 
-  // Chargement des données basé sur les filtres APPLIQUÉS
+  // ✅ DÉCLARATION DE LA VARIABLE MANQUANTE
+  const nextFicheNumber = stocks.length > 0 
+    ? Math.max(...stocks.map(s => s.numero_fiche)) + 1 
+    : 1;
+
   useEffect(() => {
     loadStocks();
   }, [currentPage, appliedFilters]);
@@ -73,6 +92,31 @@ const StockComponent: React.FC = () => {
   useEffect(() => {
     loadChantiers();
   }, []);
+
+  useEffect(() => {
+    const checkExisting = async () => {
+      if (formData.chantier_id && formData.article_id && !editingId) {
+        try {
+          setCheckingStock(true);
+          setError(null);
+          const existing = await stocksApi.find(formData.chantier_id, formData.article_id);
+          setExistingStock(existing);
+          setFormData(prev => ({ 
+            ...prev, 
+            quantite_initiale: existing.quantite_finale,
+            unite: existing.unite || prev.unite 
+          }));
+        } catch (err) {
+          setExistingStock(null); 
+        } finally {
+          setCheckingStock(false);
+        }
+      } else {
+        setExistingStock(null);
+      }
+    };
+    checkExisting();
+  }, [formData.chantier_id, formData.article_id, editingId]);
 
   const loadStocks = async () => {
     try {
@@ -108,14 +152,12 @@ const StockComponent: React.FC = () => {
     }
   };
 
-  // ✅ Appliquer les filtres
   const handleApplyFilters = (e: React.FormEvent) => {
     e.preventDefault();
-    setCurrentPage(1); // Retour à la page 1
-    setAppliedFilters(localFilters); // Copie les filtres locaux vers les filtres appliqués
+    setCurrentPage(1);
+    setAppliedFilters(localFilters);
   };
 
-  // ✅ Réinitialiser les filtres
   const handleResetFilters = () => {
     const emptyFilters = { search: '', chantier_id: '' as number | '', statut_validation: '', date_debut: '', date_fin: '' };
     setLocalFilters(emptyFilters);
@@ -129,8 +171,8 @@ const StockComponent: React.FC = () => {
       const articles = data.articles || data.items || [];
       return articles.map(article => ({
         value: article.id,
-        label: article.reference_interne,
-        sublabel: `${article.nom} - CMUP: ${article.cout} MGA`
+        label: article.nom, 
+        sublabel: `${article.reference_interne} - CMUP: ${article.cout} MGA`
       }));
     } catch (err) {
       console.error('❌ Erreur recherche articles:', err);
@@ -141,9 +183,9 @@ const StockComponent: React.FC = () => {
   const getArticleLabel = useCallback(async (articleId: number) => {
     try {
       const article = await articlesApi.getById(articleId);
-      return `${article.reference_interne} - ${article.nom}`;
+      return `${article.nom} (${article.reference_interne})`;
     } catch (err) {
-      return `Article #${articleId}`;
+      return `Article inconnu (ID: ${articleId})`;
     }
   }, []);
 
@@ -189,11 +231,9 @@ const StockComponent: React.FC = () => {
 
     if (!formData.chantier_id) { setError('Veuillez sélectionner un chantier'); return; }
     if (!formData.article_id) { setError('Veuillez sélectionner un article'); return; }
-    if (!formData.numero_fiche || formData.numero_fiche <= 0) { setError('Le numéro de fiche doit être supérieur à 0'); return; }
 
     try {
-      const dataToSubmit: StockFormData = {
-        numero_fiche: formData.numero_fiche,
+      const dataToSubmit = {
         reference_odoo: formData.reference_odoo,
         chantier_id: formData.chantier_id!,
         article_id: formData.article_id!,
@@ -209,8 +249,8 @@ const StockComponent: React.FC = () => {
         await stocksApi.update(editingId, dataToSubmit);
         setSuccess('Stock mis à jour avec succès');
       } else {
-        await stocksApi.create(dataToSubmit);
-        setSuccess('Stock créé avec succès (en attente de validation)');
+        await stocksApi.create(dataToSubmit as any);
+        setSuccess(existingStock ? 'Stock écrasé avec succès (historique conservé)' : 'Stock créé avec succès (en attente de validation)');
       }
       
       loadStocks();
@@ -219,6 +259,55 @@ const StockComponent: React.FC = () => {
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de l\'enregistrement');
+    }
+  };
+
+  const handleQuickSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!quickFormData.chantier_id) { setError('Veuillez sélectionner un chantier'); return; }
+    if (!quickFormData.article_id) { setError('Veuillez sélectionner un article'); return; }
+
+    try {
+      await stocksApi.create({
+        chantier_id: quickFormData.chantier_id,
+        article_id: quickFormData.article_id,
+        quick_create: true,
+      } as any);
+      
+      setSuccess('Fiche de stock créée avec succès !');
+      loadStocks();
+      setQuickFormData({ chantier_id: undefined, article_id: undefined });
+      setShowQuickModal(false);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur lors de l\'enregistrement');
+    }
+  };
+
+  const handleInventaireSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inventaireStock) return;
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await stocksApi.inventaire(inventaireStock.id, {
+        quantite_comptee: inventaireFormData.quantite_comptee,
+        prix_unitaire: inventaireFormData.prix_unitaire,
+        date_inventaire: inventaireFormData.date_inventaire,
+        commentaire: inventaireFormData.commentaire,
+      });
+      
+      setSuccess(response.message || 'Inventaire enregistré avec succès');
+      loadStocks();
+      setShowInventaireModal(false);
+      setInventaireStock(null);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur lors de l\'inventaire');
     }
   };
 
@@ -240,12 +329,11 @@ const StockComponent: React.FC = () => {
 
   const handleEdit = (stock: Stock) => {
     if (stock.statut_validation === 'Validé') {
-      setError('Impossible de modifier un stock validé');
+      setError('Impossible de modifier un stock validé. Utilisez "Inventaire" pour ajuster les quantités.');
       return;
     }
     setEditingId(stock.id);
     setFormData({
-      numero_fiche: stock.numero_fiche,
       reference_odoo: stock.reference_odoo || '',
       chantier_id: stock.chantier_id,
       article_id: stock.article_id,
@@ -257,6 +345,17 @@ const StockComponent: React.FC = () => {
       fichier_pj: stock.fichier_pj || undefined,
     });
     setShowModal(true);
+  };
+
+  const handleOpenInventaire = (stock: Stock) => {
+    setInventaireStock(stock);
+    setInventaireFormData({
+      quantite_comptee: stock.quantite_finale,
+      prix_unitaire: stock.prix_unitaire || 0,
+      date_inventaire: new Date().toISOString().split('T')[0],
+      commentaire: `Inventaire physique - Fiche N°${stock.numero_fiche}`,
+    });
+    setShowInventaireModal(true);
   };
 
   const handleDelete = async (id: number) => {
@@ -318,7 +417,6 @@ const StockComponent: React.FC = () => {
 
   const resetForm = () => {
     setFormData({
-      numero_fiche: 0,
       reference_odoo: '',
       chantier_id: undefined,
       article_id: undefined,
@@ -330,6 +428,7 @@ const StockComponent: React.FC = () => {
       fichier_pj: undefined,
     });
     setEditingId(null);
+    setExistingStock(null);
     setError(null);
   };
 
@@ -354,6 +453,8 @@ const StockComponent: React.FC = () => {
     catch { return dateStr; }
   };
 
+  const formatFicheNumber = (n: number) => `N°${String(n).padStart(5, '0')}`;
+
   if (loading && stocks.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -372,6 +473,12 @@ const StockComponent: React.FC = () => {
         </div>
         <div className="flex items-center space-x-3">
           <input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={handleImportFile} className="hidden" />
+          
+          <button onClick={() => { setQuickFormData({ chantier_id: undefined, article_id: undefined }); setShowQuickModal(true); }} className="btn bg-emerald-600 text-white hover:bg-emerald-700 flex items-center space-x-2">
+            <FilePlus size={20} />
+            <span>Créer Fiche de Stock</span>
+          </button>
+
           <button onClick={handleImportClick} disabled={importing} className="btn btn-success flex items-center space-x-2">
             <Upload size={20} />
             <span>{importing ? 'Import en cours...' : 'Importer CSV'}</span>
@@ -404,11 +511,9 @@ const StockComponent: React.FC = () => {
         <div className="bg-green-50 border border-green-200 rounded-lg p-4"><p className="text-sm text-green-600 font-medium">Validés</p><p className="text-2xl font-bold text-green-900">{stats.valide}</p></div>
       </div>
 
-      {/* ✅ FORMULAIRE DE RECHERCHE ET FILTRES */}
+      {/* Filtres */}
       <form onSubmit={handleApplyFilters} className="bg-white rounded-lg shadow p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
-          
-          {/* Recherche globale */}
           <div className="md:col-span-2 relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">Recherche</label>
             <div className="relative">
@@ -423,7 +528,6 @@ const StockComponent: React.FC = () => {
             </div>
           </div>
 
-          {/* Filtre Chantier */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Chantier</label>
             <select
@@ -438,7 +542,6 @@ const StockComponent: React.FC = () => {
             </select>
           </div>
 
-          {/* Filtre Statut */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Statut</label>
             <select
@@ -452,7 +555,6 @@ const StockComponent: React.FC = () => {
             </select>
           </div>
 
-          {/* Filtres Date */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Date début</label>
             <input 
@@ -472,7 +574,6 @@ const StockComponent: React.FC = () => {
             />
           </div>
 
-          {/* Boutons d'action */}
           <div className="md:col-span-6 flex justify-end space-x-3 pt-2">
             <button type="button" onClick={handleResetFilters} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 font-medium">
               Réinitialiser
@@ -482,7 +583,6 @@ const StockComponent: React.FC = () => {
               <span>Rechercher</span>
             </button>
           </div>
-
         </div>
       </form>
 
@@ -497,11 +597,8 @@ const StockComponent: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Réf. Doc</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chantier</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Article</th>
-                
-                {/* ✅ NOUVELLES COLONNES QUANTITÉ */}
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Initiale</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qté Finale</th>
-
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prix Total</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">État</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
@@ -515,15 +612,19 @@ const StockComponent: React.FC = () => {
               ) : (
                 stocks.map((stock) => (
                   <tr key={stock.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{stock.numero_fiche}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      FICHE DE STOCK {formatFicheNumber(stock.numero_fiche)}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatDate(stock.date_inventaire)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{stock.reference_document || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{stock.chantier?.code || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-gray-900"><div><p className="font-medium">{stock.article?.reference_interne}</p><p className="text-gray-500">{stock.article?.nom}</p></div></td>
-                    
-                    {/* ✅ AFFICHAGE DES QUANTITÉS */}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-600">{stock.quantite_initiale} {stock.unite}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">{stock.quantite_finale} {stock.unite}</td>
+                    <td className="px-6 py-4 text-sm text-gray-900"><div><p className="font-medium">{stock.article?.nom}</p><p className="text-gray-500">{stock.article?.reference_interne}</p></div></td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-600">
+                      {stock.quantite_initiale}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                      {stock.quantite_finale}
+                    </td>
 
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatPrice(stock.prix_total || 0)}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -542,6 +643,14 @@ const StockComponent: React.FC = () => {
                       ) : <span className="text-gray-400">-</span>}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      <button 
+                        onClick={() => handleOpenInventaire(stock)} 
+                        className="text-indigo-600 hover:text-indigo-900 inline-flex" 
+                        title="Faire un inventaire"
+                      >
+                        <ClipboardList size={18} />
+                      </button>
+
                       {canValidate && stock.statut_validation === 'Brouillon' && (
                         <button onClick={() => handleValidate(stock.id)} disabled={validatingId === stock.id} className="text-green-600 hover:text-green-900 inline-flex" title="Valider">
                           <CheckCircle size={18} />
@@ -572,7 +681,7 @@ const StockComponent: React.FC = () => {
         )}
       </div>
 
-      {/* Modal de création/édition */}
+      {/* MODAL COMPLET : Nouveau Stock */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -582,14 +691,54 @@ const StockComponent: React.FC = () => {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Numéro de Fiche <span className="text-red-500">*</span></label>
-                  <input type="number" min="1" value={formData.numero_fiche || ''} onChange={(e) => setFormData({ ...formData, numero_fiche: parseInt(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+              
+
+              <SearchableSelect 
+                label="Chantier *" 
+                options={chantierOptions} 
+                value={formData.chantier_id} 
+                onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined, article_id: undefined })} 
+                placeholder="Sélectionner un chantier..." 
+                allowEmpty={false} 
+              />
+
+              <SearchableSelectAPI 
+                label="Article *" 
+                placeholder="Tapez pour rechercher..." 
+                value={formData.article_id} 
+                onChange={(value) => setFormData({ ...formData, article_id: value })} 
+                searchFunction={searchArticles} 
+                getSelectedLabel={getArticleLabel} 
+                allowEmpty={false} 
+                minChars={2}
+                disabled={!formData.chantier_id}
+              />
+
+              {checkingStock && <div className="text-sm text-blue-600 italic flex items-center"><Lock size={14} className="mr-1"/> Vérification de l'existant...</div>}
+
+              {existingStock && !editingId && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <p className="text-sm text-amber-800 font-medium flex items-center">
+                    <AlertCircle className="mr-2" size={16} />
+                    Une fiche existe déjà pour cet article sur ce chantier.
+                  </p>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Le numéro de fiche sera conservé : <strong>FICHE DE STOCK N°{String(existingStock.numero_fiche).padStart(5, '0')}</strong>
+                  </p>
+                  <p className="text-sm text-amber-700">
+                    Quantité actuelle : <strong>{existingStock.quantite_finale} {existingStock.unite}</strong>
+                  </p>
                 </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Référence Odoo</label>
                   <input type="text" value={formData.reference_odoo} onChange={(e) => setFormData({ ...formData, reference_odoo: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: REF-001" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Référence document</label>
+                  <input type="text" value={formData.reference_document} onChange={(e) => setFormData({ ...formData, reference_document: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: INV-2025-001" />
                 </div>
               </div>
 
@@ -601,29 +750,31 @@ const StockComponent: React.FC = () => {
                   </label>
                   <input type="date" value={formData.date_inventaire} onChange={(e) => setFormData({ ...formData, date_inventaire: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Référence document</label>
-                  <input type="text" value={formData.reference_document} onChange={(e) => setFormData({ ...formData, reference_document: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: INV-2025-001" />
-                </div>
               </div>
-
-              <SearchableSelect label="Chantier" options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined })} placeholder="Rechercher un chantier..." allowEmpty={false} />
-
-              <SearchableSelectAPI label="Article (Recherche parmi 150 000+)" placeholder="Tapez pour rechercher (ex: collier, tuyau, etc.)" value={formData.article_id} onChange={(value) => setFormData({ ...formData, article_id: value })} searchFunction={searchArticles} getSelectedLabel={getArticleLabel} allowEmpty={false} minChars={2} />
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Unité</label>
-                  <input type="text" value={formData.unite} onChange={(e) => setFormData({ ...formData, unite: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: unité, kg, m" />
+                  <input type="text" value={formData.unite} onChange={(e) => setFormData({ ...formData, unite: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: unité" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Quantité Initiale <span className="text-red-500">*</span></label>
-                  <input type="number" step="0.01" min="0" value={formData.quantite_initiale || ''} onChange={(e) => setFormData({ ...formData, quantite_initiale: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    min="0" 
+                    value={formData.quantite_initiale || ''} 
+                    onChange={(e) => setFormData({ ...formData, quantite_initiale: parseFloat(e.target.value) || 0 })} 
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${existingStock ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`} 
+                    required 
+                    disabled={!!existingStock}
+                  />
+                  {existingStock && <p className="text-xs text-amber-600 mt-1">Pré-rempli avec la quantité finale actuelle.</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <DollarSign className="inline mr-1" size={16} />
-                    Prix Unitaire Initial <span className="text-red-500">*</span>
+                    Prix Unitaire <span className="text-red-500">*</span>
                   </label>
                   <input type="number" step="0.01" min="0" value={formData.prix_unitaire || ''} onChange={(e) => setFormData({ ...formData, prix_unitaire: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                 </div>
@@ -654,7 +805,115 @@ const StockComponent: React.FC = () => {
 
               <div className="flex justify-end space-x-3 pt-4 border-t">
                 <button type="button" onClick={() => { setShowModal(false); resetForm(); }} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Annuler</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" disabled={chantiers.length === 0}>{editingId ? 'Mettre à jour' : 'Créer'}</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" disabled={chantiers.length === 0}>{editingId ? 'Mettre à jour' : (existingStock ? 'Écraser la fiche' : 'Créer')}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RAPIDE */}
+      {showQuickModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+            <div className="flex items-center justify-between p-6 border-b">
+              <h2 className="text-xl font-bold flex items-center text-emerald-700"><FilePlus className="mr-2" size={24} />Créer une fiche de stock</h2>
+              <button onClick={() => setShowQuickModal(false)} className="text-gray-400 hover:text-gray-600"><span className="text-2xl">&times;</span></button>
+            </div>
+
+            <form onSubmit={handleQuickSubmit} className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800 mb-4 flex items-center">
+                <Hash className="mr-2 text-blue-600" size={18} />
+                Le numéro de fiche sera automatiquement généré.
+              </div>
+
+              <SearchableSelect 
+                label="Chantier *" 
+                options={chantierOptions} 
+                value={quickFormData.chantier_id} 
+                onChange={(value) => setQuickFormData({ ...quickFormData, chantier_id: value as number | undefined, article_id: undefined })} 
+                placeholder="Sélectionner un chantier..." 
+                allowEmpty={false} 
+              />
+
+              <SearchableSelectAPI 
+                label="Article *" 
+                placeholder="Tapez pour rechercher..." 
+                value={quickFormData.article_id} 
+                onChange={(value) => setQuickFormData({ ...quickFormData, article_id: value })} 
+                searchFunction={searchArticles} 
+                getSelectedLabel={getArticleLabel} 
+                allowEmpty={false} 
+                minChars={2}
+                disabled={!quickFormData.chantier_id}
+              />
+
+              <div className="flex justify-end space-x-3 pt-4 border-t">
+                <button type="button" onClick={() => setShowQuickModal(false)} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Annuler</button>
+                <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center space-x-2">
+                  <FilePlus size={18} />
+                  <span>Créer la fiche</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL INVENTAIRE */}
+      {showInventaireModal && inventaireStock && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+            <div className="flex items-center justify-between p-6 border-b bg-indigo-50">
+              <h2 className="text-xl font-bold flex items-center text-indigo-800">
+                <ClipboardList className="mr-2" size={24} />
+                Nouvel Inventaire
+              </h2>
+              <button onClick={() => setShowInventaireModal(false)} className="text-gray-400 hover:text-gray-600"><span className="text-2xl">&times;</span></button>
+            </div>
+
+            <form onSubmit={handleInventaireSubmit} className="p-6 space-y-4">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-2">
+                <p className="text-sm font-bold text-gray-800">Fiche concernée :</p>
+                <p className="text-sm text-gray-600">FICHE DE STOCK N°{String(inventaireStock.numero_fiche).padStart(5, '0')}</p>
+                <p className="text-sm text-gray-600">{inventaireStock.article?.nom} ({inventaireStock.article?.reference_interne})</p>
+                <p className="text-sm text-gray-600">Chantier : {inventaireStock.chantier?.code}</p>
+                <div className="mt-2 text-sm">
+                  <span className="font-medium text-gray-700">Quantité théorique actuelle : </span>
+                  <span className="text-lg font-bold text-blue-600">{inventaireStock.quantite_finale}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date de l'inventaire <span className="text-red-500">*</span></label>
+                <input type="date" value={inventaireFormData.date_inventaire} onChange={(e) => setInventaireFormData({ ...inventaireFormData, date_inventaire: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantité réellement comptée <span className="text-red-500">*</span></label>
+                <input type="number" step="0.01" min="0" value={inventaireFormData.quantite_comptee || ''} onChange={(e) => setInventaireFormData({ ...inventaireFormData, quantite_comptee: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border-2 border-indigo-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg font-bold" required />
+                <p className="text-xs text-gray-500 mt-1">La différence sera automatiquement ajustée en entrée ou sortie.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <DollarSign className="inline mr-1" size={16} />
+                  Prix Unitaire (MGA) <span className="text-red-500">*</span>
+                </label>
+                <input type="number" step="0.01" min="0" value={inventaireFormData.prix_unitaire || ''} onChange={(e) => setInventaireFormData({ ...inventaireFormData, prix_unitaire: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Commentaire</label>
+                <input type="text" value={inventaireFormData.commentaire} onChange={(e) => setInventaireFormData({ ...inventaireFormData, commentaire: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ex: Inventaire mensuel..." />
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t">
+                <button type="button" onClick={() => setShowInventaireModal(false)} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Annuler</button>
+                <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center space-x-2">
+                  <ClipboardList size={18} />
+                  <span>Enregistrer l'inventaire</span>
+                </button>
               </div>
             </form>
           </div>

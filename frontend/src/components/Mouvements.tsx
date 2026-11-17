@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mouvement, Stock, Chantier } from '../types';
 import { mouvementsApi, stocksApi, chantiersApi, articlesApi, exportApi, uploadApi } from '../services/api';
-import { Plus, Trash2, TrendingUp, ArrowDownCircle, ArrowUpCircle, AlertCircle, Download, DollarSign, CheckCircle, FileText, Calendar, X, Layers, Search, CheckSquare, Edit2, Lock } from 'lucide-react';
+import { Plus, Trash2, TrendingUp, ArrowDownCircle, ArrowUpCircle, AlertCircle, Download, DollarSign, CheckCircle, FileText, Calendar, X, Layers, Search, CheckSquare, Edit2, Lock, Ban } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import SearchableSelectAPI from './SearchableSelectAPI';
 import useDebounce from '../hooks/useDebounce';
@@ -72,7 +72,6 @@ const Mouvements: React.FC = () => {
     loadChantiers();
   }, []);
 
-  // ✅ LOGIQUE DE RECHERCHE DU STOCK
   useEffect(() => {
     const findStock = async () => {
       if (formData.type === 'SORTIE' && formData.chantier_id && formData.article_id) {
@@ -92,14 +91,12 @@ const Mouvements: React.FC = () => {
           setSearchingStock(false);
         }
       } 
-      // ✅ RECHERCHE POUR LA RÉSERVATION (Chantier source figé O23005)
       else if (formData.type === 'RESERVATION' && formData.article_id) {
         try {
           setSearchingStock(true);
           setError(null);
           setFoundStock(null);
           
-          // On cherche le chantier O23005 dans la liste locale
           const chantierSource = chantiers.find(c => c.code === 'O23005');
           if (!chantierSource) {
             setError("Le chantier source O23005 est introuvable. Veuillez le créer.");
@@ -187,12 +184,20 @@ const Mouvements: React.FC = () => {
     try {
       const article = await articlesApi.getById(articleId);
       return `${article.nom} (${article.reference_interne})`;
-    } catch (err) { return `Article #${articleId}`; }
+    } catch (err) { return `Article inconnu (ID: ${articleId})`; }
   }, []);
 
   const chantierOptions = chantiers
     .filter(c => c.statut === 'Actif')
     .map(chantier => ({ value: chantier.id, label: chantier.code, sublabel: chantier.nom }));
+
+  const formatChantierAffichage = (chantier?: Chantier) => {
+    if (!chantier) return '-';
+    const client = chantier.client ? chantier.client : '-';
+    const code = chantier.code ? chantier.code : '-';
+    const nom = chantier.nom ? chantier.nom : '-';
+    return `${client} - ${code} - ${nom}`;
+  };
 
   const handlePjUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -214,11 +219,24 @@ const Mouvements: React.FC = () => {
     catch (err) { setError('Impossible de télécharger le fichier'); }
   };
 
-  const handleEdit = (m: Mouvement) => {
-    if (m.statut_validation === 'Validé') {
-      setError('Impossible de modifier un mouvement validé');
+  const handleEdit = async (m: Mouvement) => {
+    if (m.statut_validation !== 'Brouillon') {
+      setError(`Impossible de modifier un mouvement ${m.statut_validation.toLowerCase()}`);
       return;
     }
+    
+    if (m.numero_bs_br_cj) {
+      try {
+        const pieceMvts = await mouvementsApi.getByPiece(m.numero_bs_br_cj);
+        if (pieceMvts.length > 1) {
+          navigate(`/mouvements/nouveau?piece=${encodeURIComponent(m.numero_bs_br_cj)}`);
+          return;
+        }
+      } catch (err) {
+        // En cas d'erreur, on continue en mode simple
+      }
+    }
+
     setEditingId(m.id);
     setFormData({
       date: m.date,
@@ -266,7 +284,7 @@ const Mouvements: React.FC = () => {
         prix_unitaire: formData.prix_unitaire, 
         commentaire: formData.commentaire, 
         fichier_pj: formData.fichier_pj || undefined,
-        type_mouvement: formData.type, // ✅ On envoie le type explicite
+        type_mouvement: formData.type,
       };
 
       if (editingId) {
@@ -310,15 +328,15 @@ const Mouvements: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce mouvement ?')) return;
+  const handleAnnuler = async (id: number) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir annuler ce mouvement ? Le stock sera restauré si nécessaire.')) return;
     try {
-      await mouvementsApi.delete(id);
-      setSuccess('Mouvement supprimé avec succès');
+      await mouvementsApi.annuler(id);
+      setSuccess('Mouvement annulé avec succès');
       loadMouvements();
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur lors de la suppression');
+      setError(err instanceof Error ? err.message : 'Erreur lors de l\'annulation');
     }
   };
 
@@ -387,17 +405,15 @@ const Mouvements: React.FC = () => {
       {error && <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-start"><AlertCircle className="mr-2 mt-0.5 flex-shrink-0" size={20} /><span>{error}</span></div>}
       {success && <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">✓ {success}</div>}
 
-      {/* ✅ FORMULAIRE DE RECHERCHE ET FILTRES */}
       <form onSubmit={handleApplyFilters} className="bg-white rounded-lg shadow p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
-          
           <div className="md:col-span-1 relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">Recherche</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input 
                 type="text" 
-                placeholder="N° pièce, chantier, article..." 
+                placeholder="N° pièce, réf doc, chantier..." 
                 value={localFilters.search} 
                 onChange={(e) => setLocalFilters({ ...localFilters, search: e.target.value })} 
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
@@ -413,7 +429,7 @@ const Mouvements: React.FC = () => {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Tous</option>
-              {chantiers.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
+              {chantiers.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
             </select>
           </div>
 
@@ -441,11 +457,12 @@ const Mouvements: React.FC = () => {
               <option value="">Tous</option>
               <option value="Brouillon">Brouillon</option>
               <option value="Validé">Validé</option>
+              <option value="Annulé">Annulé</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date début</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date mouvement (début)</label>
             <input 
               type="date" 
               value={localFilters.date_debut} 
@@ -454,7 +471,7 @@ const Mouvements: React.FC = () => {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date fin</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date mouvement (fin)</label>
             <input 
               type="date" 
               value={localFilters.date_fin} 
@@ -472,11 +489,9 @@ const Mouvements: React.FC = () => {
               <span>Rechercher</span>
             </button>
           </div>
-
         </div>
       </form>
 
-      {/* Liste des mouvements */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -485,6 +500,8 @@ const Mouvements: React.FC = () => {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date saisie</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date mouvement</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">N° BS/BR/CJ</th>
+                {/* ✅ NOUVELLE COLONNE REF DOC */}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Réf. Doc</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Chantier</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Article</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Type</th>
@@ -498,7 +515,7 @@ const Mouvements: React.FC = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {mouvements.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center">
+                  <td colSpan={12} className="px-6 py-12 text-center">
                     <TrendingUp className="mx-auto h-12 w-12 text-gray-400" />
                     <p className="mt-2 text-sm text-gray-500">{appliedFilters.search || appliedFilters.chantier_id || appliedFilters.type_mouvement || appliedFilters.statut_validation || appliedFilters.date_debut || appliedFilters.date_fin ? 'Aucun mouvement trouvé' : 'Aucun mouvement enregistré'}</p>
                   </td>
@@ -509,7 +526,11 @@ const Mouvements: React.FC = () => {
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">{formatDateTime(m.date_saisie || m.created_at)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{formatDate(m.date)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 font-medium">{m.numero_bs_br_cj || '-'}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{m.chantier?.code || '-'}</td>
+                    {/* ✅ AFFICHAGE REF DOC */}
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{m.reference_document || '-'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                      {formatChantierAffichage(m.chantier)}
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap"><div><p className="font-medium">{m.article?.nom}</p><p className="text-gray-500 text-xs">{m.article?.reference_interne}</p></div></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {m.type_mouvement === 'ENTREE' ? <span className="flex items-center text-green-600 text-sm font-medium"><ArrowDownCircle className="mr-1" size={16} /> Entrée</span> : 
@@ -522,13 +543,18 @@ const Mouvements: React.FC = () => {
                       {m.fichier_pj ? <button onClick={() => handleDownloadPj(m.fichier_pj!)} className="text-blue-600 hover:text-blue-900" title="Télécharger PJ"><FileText size={18} /></button> : <span className="text-gray-400">-</span>}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${m.statut_validation === 'Validé' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{m.statut_validation || 'Brouillon'}</span>
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                        m.statut_validation === 'Validé' ? 'bg-green-100 text-green-800' : 
+                        m.statut_validation === 'Annulé' ? 'bg-gray-100 text-gray-800' : 
+                        'bg-yellow-100 text-yellow-800'}`}>
+                        {m.statut_validation || 'Brouillon'}
+                      </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                      {canValidate && m.statut_validation !== 'Validé' && m.numero_bs_br_cj && (
+                      {canValidate && m.statut_validation === 'Brouillon' && m.numero_bs_br_cj && (
                         <button onClick={() => handleValidateBatch(m.numero_bs_br_cj!)} className="text-indigo-600 hover:text-indigo-900 inline-flex" title={`Valider tout le lot ${m.numero_bs_br_cj}`}><CheckSquare size={18} /></button>
                       )}
-                      {canValidate && m.statut_validation !== 'Validé' && !m.numero_bs_br_cj && (
+                      {canValidate && m.statut_validation === 'Brouillon' && !m.numero_bs_br_cj && (
                         <button onClick={() => handleValidate(m.id)} disabled={validatingId === m.id} className="text-green-600 hover:text-green-900 inline-flex" title="Valider"><CheckCircle size={18} /></button>
                       )}
                       
@@ -537,7 +563,7 @@ const Mouvements: React.FC = () => {
                       )}
 
                       {m.statut_validation === 'Brouillon' && (
-                        <button onClick={() => handleDelete(m.id)} className="text-red-600 hover:text-red-900" title="Supprimer / Annuler"><Trash2 size={18} /></button>
+                        <button onClick={() => handleAnnuler(m.id)} className="text-orange-600 hover:text-orange-900" title="Annuler le mouvement"><Ban size={18} /></button>
                       )}
                     </td>
                   </tr>
@@ -557,7 +583,6 @@ const Mouvements: React.FC = () => {
         )}
       </div>
 
-      {/* Modal de création/édition */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -586,7 +611,6 @@ const Mouvements: React.FC = () => {
                 <input type="text" value={formData.numero_bs_br_cj} onChange={(e) => setFormData({ ...formData, numero_bs_br_cj: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: BS-001" />
               </div>
 
-              {/* ✅ NOUVEAU TYPE DE MOUVEMENT */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Type de mouvement <span className="text-red-500">*</span></label>
                 <div className="flex space-x-4">
@@ -605,19 +629,10 @@ const Mouvements: React.FC = () => {
                 </div>
               </div>
 
-              {/* ✅ GESTION DES CHANTIERS (Bénéficiaire vs Source) */}
               {formData.type === 'RESERVATION' ? (
-                <div className="space-y-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Chantier bénéficiaire (qui réserve)</label>
-                    <SearchableSelect options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined, article_id: undefined })} placeholder="Sélectionner le chantier bénéficiaire..." allowEmpty={false} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Chantier source (Stock déduit)</label>
-                    <div className="flex items-center px-3 py-2 bg-gray-200 rounded-lg text-gray-700 font-mono font-bold">
-                      O23005 (Figé)
-                    </div>
-                  </div>
+                <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Chantier bénéficiaire (qui réserve)</label>
+                  <SearchableSelect options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined, article_id: undefined })} placeholder="Sélectionner le chantier bénéficiaire..." allowEmpty={false} />
                 </div>
               ) : (
                 <SearchableSelect label="Chantier" options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined, article_id: undefined })} placeholder="Rechercher un chantier..." allowEmpty={false} />

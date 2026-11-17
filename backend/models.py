@@ -151,7 +151,7 @@ class Stock(db.Model):
     __tablename__ = 'stocks'
     
     id = db.Column(db.Integer, primary_key=True)
-    numero_fiche = db.Column(db.Integer, unique=True, nullable=False, index=True)
+    numero_fiche = db.Column(db.Integer, nullable=False, index=True)
     reference_odoo = db.Column(db.String(50), index=True)
     chantier_id = db.Column(db.Integer, db.ForeignKey('chantiers.id'), nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=False, index=True)
@@ -176,6 +176,10 @@ class Stock(db.Model):
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('chantier_id', 'numero_fiche', name='uq_chantier_numero_fiche'),
+    )
     
     # Relations
     chantier = db.relationship('Chantier', back_populates='stocks')
@@ -322,6 +326,7 @@ class Mouvement(db.Model):
             'date': self.date.isoformat() if self.date else None,
             'date_saisie': self.date_saisie.isoformat() if self.date_saisie else None,
             'numero_bs_br_cj': self.numero_bs_br_cj,
+            'reference_document': self.stock.reference_document if self.stock else None,
             'chantier_id': self.chantier_id,
             'stock_id': self.stock_id,
             'article_id': self.article_id,

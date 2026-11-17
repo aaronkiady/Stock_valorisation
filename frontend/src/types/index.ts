@@ -60,6 +60,7 @@ export interface Mouvement {
   id: number;
   date: string;
   numero_bs_br_cj: string;
+  reference_document?: string;
   chantier_id?: number;
   stock_id: number;
   article_id: number;
@@ -72,7 +73,8 @@ export interface Mouvement {
   utilisateur?: string;
   date_saisie?: string;
   fichier_pj?: string;
-  statut_validation: 'Brouillon' | 'Validé';
+  // ✅ Ajout de 'Annulé'
+  statut_validation: 'Brouillon' | 'Validé' | 'Annulé'; 
   date_validation?: string;
   validateur?: User;
   chantier?: Chantier;
@@ -85,7 +87,7 @@ export interface AuditLog {
   id: number;
   table_name: string;
   record_id: number;
-  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'CREATE' | 'VALIDATE' | 'IMPORT';
+  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'CREATE' | 'VALIDATE' | 'IMPORT' | 'ANNULER';
   old_values?: Record<string, any>;
   new_values?: Record<string, any>;
   utilisateur: string;
@@ -167,7 +169,7 @@ export interface MouvementFormData {
   date: string;
   numero_bs_br_cj: string;
   chantier_id?: number;
-  stock_id?: number; // ✅ Optionnel
+  stock_id?: number;
   article_id: number;
   entree?: number;
   sortie?: number;
@@ -181,13 +183,17 @@ export interface MouvementBatchData {
   numero_bs_br_cj: string;
   fichier_pj?: string;
   commentaire?: string;
+  // ✅ Ajout du type global
+  type_mouvement?: 'ENTREE' | 'SORTIE' | 'RESERVATION'; 
   mouvements: {
-    stock_id?: number; // ✅ Optionnel
+    stock_id?: number;
     article_id: number;
     chantier_id?: number;
+    // ✅ Ajout de l'unité
+    unite?: string; 
     entree?: number;
     sortie?: number;
-    prix_unitaire: number;
+    prix_unitaire?: number;
   }[];
 }
 

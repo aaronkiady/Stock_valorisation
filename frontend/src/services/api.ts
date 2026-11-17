@@ -105,7 +105,6 @@ export const exportApi = {
     return downloadFile(`${API_BASE_URL}/stocks/export${query}`, `stocks_${timestamp}`);
   },
 
-  // ✅ Ajout de 'search' dans les filtres
   mouvements: async (filters: SearchFilters = {}): Promise<void> => {
     const params = new URLSearchParams();
     if (filters.search) params.append('search', filters.search);
@@ -264,13 +263,20 @@ export const stocksApi = {
   validate: async (id: number): Promise<Stock> => {
     const response = await fetch(`${API_BASE_URL}/stocks/${id}/validate`, { method: 'PUT', headers: getHeaders() });
     return handleResponse<Stock>(response);
+  },
+  inventaire: async (id: number, data: { quantite_comptee: number, prix_unitaire: number, date_inventaire: string, commentaire?: string }): Promise<{ message: string; stock: Stock }> => {
+    const response = await fetch(`${API_BASE_URL}/stocks/${id}/inventaire`, { 
+      method: 'POST', 
+      headers: getHeaders(), 
+      body: JSON.stringify(data) 
+    });
+    return handleResponse<{ message: string; stock: Stock }>(response);
   }
 };
 
 // ==================== MOUVEMENTS ====================
 
 export const mouvementsApi = {
-  // ✅ Ajout de 'search' dans les filtres
   getAll: async (filters: SearchFilters = {}): Promise<PaginatedResponse<Mouvement>> => {
     const params = new URLSearchParams();
     if (filters.search) params.append('search', filters.search);
@@ -289,6 +295,10 @@ export const mouvementsApi = {
     const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { headers: getHeaders() });
     return handleResponse<Mouvement>(response);
   },
+  getByPiece: async (numero_piece: string): Promise<Mouvement[]> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/piece/${encodeURIComponent(numero_piece)}`, { headers: getHeaders() });
+    return handleResponse<Mouvement[]>(response);
+  },
   create: async (data: MouvementFormData): Promise<Mouvement> => {
     const response = await fetch(`${API_BASE_URL}/mouvements`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
     return handleResponse<Mouvement>(response);
@@ -300,6 +310,13 @@ export const mouvementsApi = {
       body: JSON.stringify(data) 
     });
     return handleResponse<Mouvement>(response);
+  },
+  annuler: async (id: number): Promise<{ message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/${id}/annuler`, { 
+      method: 'PUT', 
+      headers: getHeaders() 
+    });
+    return handleResponse<{ message: string }>(response);
   },
   delete: async (id: number): Promise<{ message: string }> => {
     const response = await fetch(`${API_BASE_URL}/mouvements/${id}`, { method: 'DELETE', headers: getHeaders() });
@@ -319,6 +336,14 @@ export const mouvementsApi = {
   },
   createBatch: async (data: MouvementBatchData): Promise<any> => {
     const response = await fetch(`${API_BASE_URL}/mouvements/batch`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
+    return handleResponse<any>(response);
+  },
+  updateBatch: async (numero_piece: string, data: MouvementBatchData): Promise<any> => {
+    const response = await fetch(`${API_BASE_URL}/mouvements/batch/${encodeURIComponent(numero_piece)}`, { 
+      method: 'PUT', 
+      headers: getHeaders(), 
+      body: JSON.stringify(data) 
+    });
     return handleResponse<any>(response);
   }
 };
