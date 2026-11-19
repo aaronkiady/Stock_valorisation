@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mouvement, Stock, Chantier } from '../types';
 import { mouvementsApi, stocksApi, chantiersApi, articlesApi, exportApi, uploadApi } from '../services/api';
-import { Plus, Trash2, TrendingUp, ArrowDownCircle, ArrowUpCircle, AlertCircle, Download, DollarSign, CheckCircle, FileText, Calendar, X, Layers, Search, CheckSquare, Edit2, Lock, Ban } from 'lucide-react';
+import { Plus, Trash2, TrendingUp, ArrowDownCircle, ArrowUpCircle, AlertCircle, Download, DollarSign, CheckCircle, FileText, Calendar, X, Layers, Search, CheckSquare, Edit2, Lock, Ban, AlertTriangle } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import SearchableSelectAPI from './SearchableSelectAPI';
 import useDebounce from '../hooks/useDebounce';
@@ -170,15 +170,55 @@ const Mouvements: React.FC = () => {
     setCurrentPage(1);
   };
 
+  // ✅ RECHERCHE D'ARTICLES : Uniquement ceux avec stock > 0 sur le chantier
   const searchArticles = useCallback(async (searchTerm: string) => {
     try {
-      const data = await articlesApi.getAll({ search: searchTerm, per_page: 50 });
-      const articles = data.articles || data.items || [];
-      return articles.map(article => ({
-        value: article.id, label: article.nom, sublabel: `${article.reference_interne} - CMUP: ${article.cout} MGA`
-      }));
-    } catch (err) { return []; }
-  }, []);
+      // ENTREE : afficher tous les articles
+      if (formData.type === 'ENTREE') {
+        const data = await articlesApi.getAll({
+          search: searchTerm,
+          per_page: 50
+        });
+
+        return (data.articles || []).map(a => ({
+          value: a.id,
+          label: a.nom,
+          sublabel: a.reference_interne
+        }));
+      }
+
+      // SORTIE et RESERVATION : filtrer selon le stock disponible
+      let chantierSourceId = formData.chantier_id;
+
+      if (formData.type === 'RESERVATION') {
+        const source = chantiers.find(c => c.code === 'O23005');
+
+        if (!source) return [];
+
+        chantierSourceId = source.id;
+      }
+
+      if (!chantierSourceId) return [];
+
+      const stockData = await stocksApi.getAll({
+        chantier_id: chantierSourceId,
+        search: searchTerm,
+        statut_validation: 'Validé',
+        per_page: 50
+      });
+
+      return (stockData.stocks || [])
+        .filter(s => s.quantite_finale > 0)
+        .map(s => ({
+          value: s.article_id,
+          label: s.article?.nom || `Article #${s.article_id}`,
+          sublabel: `${s.article?.reference_interne} - Dispo: ${s.quantite_finale} ${s.unite}`
+        }));
+
+    } catch (err) {
+      return [];
+    }
+  }, [formData.chantier_id, formData.type, chantiers]);
 
   const getArticleLabel = useCallback(async (articleId: number) => {
     try {
@@ -263,6 +303,10 @@ const Mouvements: React.FC = () => {
     if ((formData.type === 'SORTIE' || formData.type === 'RESERVATION') && !foundStock && !editingId) { 
       setError(`Aucun stock valide trouvé pour cette ${formData.type.toLowerCase()}`); 
       return; 
+    }
+    if ((formData.type === 'ENTREE' || formData.type === 'SORTIE') && !foundStock && !editingId) {
+      setError("Aucune fiche de stock n'existe pour cet article. Veuillez la créer d'abord.");
+      return;
     }
     
     if (formData.quantite <= 0) { setError('La quantité doit être supérieure à 0'); return; }
@@ -389,15 +433,12 @@ const Mouvements: React.FC = () => {
           <h1 className="text-3xl font-bold text-gray-900">Mouvements de Stock</h1>
           <p className="text-gray-600 mt-1">Suivi des entrées et sorties</p>
         </div>
-        <div className="flex items-center space-x-3">
-          <button onClick={() => navigate('/mouvements/nouveau')} className="btn bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-2">
-            <Layers size={20} /><span>Saisie groupée</span>
-          </button>
+        <div className="flex items-center space-x-3">       
           <button onClick={handleExport} disabled={exporting} className="btn btn-secondary flex items-center space-x-2">
             <Download size={20} /><span>{exporting ? 'Export...' : 'Exporter Excel'}</span>
           </button>
-          <button onClick={() => { resetForm(); setShowModal(true); }} className="btn btn-primary flex items-center space-x-2">
-            <Plus size={20} /><span>Nouveau Mouvement</span>
+          <button onClick={() => navigate('/mouvements/nouveau')} className="btn bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-2">
+            <Layers size={20} /><span>Nouveau mouvement</span>
           </button>
         </div>
       </div>
@@ -500,7 +541,6 @@ const Mouvements: React.FC = () => {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date saisie</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Date mouvement</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">N° BS/BR/CJ</th>
-                {/* ✅ NOUVELLE COLONNE REF DOC */}
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Réf. Doc</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Chantier</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Article</th>
@@ -526,7 +566,6 @@ const Mouvements: React.FC = () => {
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">{formatDateTime(m.date_saisie || m.created_at)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{formatDate(m.date)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 font-medium">{m.numero_bs_br_cj || '-'}</td>
-                    {/* ✅ AFFICHAGE REF DOC */}
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{m.reference_document || '-'}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {formatChantierAffichage(m.chantier)}
@@ -638,7 +677,17 @@ const Mouvements: React.FC = () => {
                 <SearchableSelect label="Chantier" options={chantierOptions} value={formData.chantier_id} onChange={(value) => setFormData({ ...formData, chantier_id: value as number | undefined, article_id: undefined })} placeholder="Rechercher un chantier..." allowEmpty={false} />
               )}
 
-              <SearchableSelectAPI label="Article" placeholder="Tapez pour rechercher (ex: collier, tuyau, etc.)" value={formData.article_id} onChange={(value) => setFormData({ ...formData, article_id: value })} searchFunction={searchArticles} getSelectedLabel={getArticleLabel} allowEmpty={false} minChars={2} />
+              <SearchableSelectAPI 
+                label="Article" 
+                placeholder={formData.chantier_id ? "Tapez pour rechercher..." : "Sélectionnez d'abord un chantier"} 
+                value={formData.article_id} 
+                onChange={(value) => setFormData({ ...formData, article_id: value })} 
+                searchFunction={searchArticles} 
+                getSelectedLabel={getArticleLabel} 
+                allowEmpty={false} 
+                minChars={2}
+                disabled={!formData.chantier_id && formData.type !== 'RESERVATION'}
+              />
 
               {searchingStock && <div className="text-sm text-blue-600 italic">Recherche du stock en cours...</div>}
               

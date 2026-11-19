@@ -114,6 +114,7 @@ def build_mouvements_query(search='', chantier_id=None, date_debut='', date_fin=
         query = query.filter(db.or_(
             Mouvement.numero_bs_br_cj.ilike(search_term),
             Stock.reference_document.ilike(search_term),
+            Stock.reference_odoo.ilike(search_term),
             Chantier.code.ilike(search_term),
             Chantier.nom.ilike(search_term),
             Article.reference_interne.ilike(search_term),
@@ -402,7 +403,7 @@ def create_app(config_name=None):
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/articles', methods=['POST'])
-    @roles_required('admin', 'RespStock')
+    @admin_required
     def create_article():
         try:
             data = request.json
@@ -485,7 +486,7 @@ def create_app(config_name=None):
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/chantiers', methods=['POST'])
-    @roles_required('admin', 'RespStock')
+    @admin_required
     def create_chantier():
         try:
             data = request.json
@@ -618,7 +619,6 @@ def create_app(config_name=None):
             article = db.session.get(Article, data['article_id'])
             if not article: return jsonify({'error': 'Article introuvable'}), 404
             
-            # ✅ VÉRIFICATION : Le stock existe-t-il déjà pour ce couple ?
             existing = Stock.query.filter_by(
                 chantier_id=data['chantier_id'], 
                 article_id=data['article_id']
@@ -627,14 +627,12 @@ def create_app(config_name=None):
             is_quick = data.get('quick_create', False)
             
             if existing:
-                # ✅ MODE ÉCRASEMENT : On met à jour la fiche existante sans créer de mouvement de sortie
                 if is_quick:
                     return jsonify({'message': 'Une fiche existe déjà pour cet article sur ce chantier', 'stock': existing.to_dict()}), 200
                 
                 nouvelle_qte = float(data.get('quantite_initiale', 0))
                 nouveau_prix = float(data.get('prix_unitaire', 0))
                 
-                # 1. Mise à jour de la fiche
                 existing.quantite_initiale = nouvelle_qte
                 existing.quantite_finale = nouvelle_qte
                 existing.prix_unitaire = nouveau_prix
@@ -642,7 +640,7 @@ def create_app(config_name=None):
                 existing.date_inventaire = datetime.strptime(data['date_inventaire'], '%Y-%m-%d').date() if data.get('date_inventaire') else None
                 existing.reference_document = data.get('reference_document', existing.reference_document)
                 existing.fichier_pj = data.get('fichier_pj', existing.fichier_pj)
-                existing.statut_validation = 'Brouillon' # Repasse en brouillon pour revalidation
+                existing.statut_validation = 'Brouillon'
                 if existing.quantite_finale <= 0: existing.statut = 'Rupture de stock'
                 elif existing.quantite_finale <= 5: existing.statut = 'Approvisionnement URGENT!'
                 elif existing.quantite_finale <= 10: existing.statut = 'Approvisionnement nécessaire'
@@ -654,8 +652,6 @@ def create_app(config_name=None):
                 db.session.commit()
                 return jsonify({'message': 'Stock mis à jour (écrasé) avec succès', 'stock': existing.to_dict()}), 200
             
-            # ✅ NOUVELLE FICHE
-            # Génération du numéro de fiche SPÉCIFIQUE AU CHANTIER
             max_fiche = db.session.query(func.max(Stock.numero_fiche)).filter(Stock.chantier_id == data['chantier_id']).scalar() or 0
             numero_fiche = int(max_fiche) + 1
             
@@ -764,7 +760,7 @@ def create_app(config_name=None):
             if float(stock.quantite_initiale) > 0:
                 mouvement_initial = Mouvement(
                     date=stock.date_inventaire or datetime.utcnow().date(),
-                    numero_bs_br_cj='', # ✅ CORRECTION : On laisse vide au lieu d'inventer INV-...
+                    numero_bs_br_cj='',
                     chantier_id=stock.chantier_id,
                     stock_id=stock.id,
                     article_id=stock.article_id,
@@ -828,11 +824,9 @@ def create_app(config_name=None):
             
             paginated = query.paginate(page=page, per_page=per_page, error_out=False)
             
-            # ✅ ENRICHISSEMENT DES DONNÉES AVEC REF DOC
             mouvements_data = []
             for m in paginated.items:
                 d = m.to_dict()
-                # Ajout de la référence document du stock lié
                 d['reference_document'] = m.stock.reference_document if m.stock else None
                 mouvements_data.append(d)
 
@@ -922,11 +916,13 @@ def create_app(config_name=None):
             
             stock = Stock.query.filter_by(chantier_id=data['chantier_id'], article_id=data['article_id']).first()
             
+            if not stock:
+                return jsonify({'error': 'Aucune fiche de stock n\'existe pour ce chantier et cet article. Veuillez d\'abord créer la fiche via "Créer Fiche de Stock".'}), 400
+            
+            if stock.statut_validation != 'Validé':
+                return jsonify({'error': 'La fiche de stock doit être validée avant de faire un mouvement.'}), 400
+            
             if sortie > 0:
-                if not stock:
-                    return jsonify({'error': 'Aucun stock existant pour ce chantier et cet article. Impossible de faire une sortie.'}), 400
-                if stock.statut_validation != 'Validé':
-                    return jsonify({'error': 'Le stock doit être validé avant de faire une sortie.'}), 400
                 if sortie > stock.quantite_finale:
                     return jsonify({'error': f'Stock insuffisant ! Disponible: {stock.quantite_finale} {stock.unite}'}), 400
                 
@@ -935,28 +931,13 @@ def create_app(config_name=None):
                 if prix_unitaire <= 0: return jsonify({'error': 'CMUP à 0, impossible de valoriser la sortie'}), 400
                 
             elif entree > 0:
-                if not stock:
+                if stock.statut_validation == 'Validé':
                     article = db.session.get(Article, data['article_id'])
-                    max_fiche = db.session.query(func.max(Stock.numero_fiche)).filter(Stock.chantier_id == data['chantier_id']).scalar() or 0
-                    nouveau_numero = int(max_fiche) + 1
-                    
-                    stock = Stock(
-                        numero_fiche=nouveau_numero,
-                        chantier_id=data['chantier_id'], article_id=data['article_id'],
-                        unite=article.unite_mesure if article else 'unité',
-                        quantite_initiale=0, prix_unitaire=prix_unitaire,
-                        statut_validation='Brouillon'
-                    )
-                    db.session.add(stock)
-                    db.session.flush()
-                else:
-                    if stock.statut_validation == 'Validé':
-                        article = db.session.get(Article, data['article_id'])
-                        if article:
-                            val_actuelle = float(stock.quantite_finale or 0) * float(article.cout or 0)
-                            val_entree = entree * prix_unitaire
-                            qte_totale = float(stock.quantite_finale or 0) + entree
-                            article.cout = (val_actuelle + val_entree) / qte_totale if qte_totale > 0 else 0
+                    if article:
+                        val_actuelle = float(stock.quantite_finale or 0) * float(article.cout or 0)
+                        val_entree = entree * prix_unitaire
+                        qte_totale = float(stock.quantite_finale or 0) + entree
+                        article.cout = (val_actuelle + val_entree) / qte_totale if qte_totale > 0 else 0
 
             type_mouvement = 'ENTREE' if entree > 0 else 'SORTIE'
 
@@ -1145,7 +1126,7 @@ def create_app(config_name=None):
 
                 mouvement_entree = Mouvement(
                     date=mouvement.date,
-                    numero_bs_br_cj=f"TRF-{mouvement.numero_bs_br_cj or mouvement.id}",
+                    numero_bs_br_cj='',
                     chantier_id=chantier_beneficiaire_id,
                     stock_id=stock_benef.id,
                     article_id=mouvement.article_id,
@@ -1260,7 +1241,7 @@ def create_app(config_name=None):
 
                     mouvement_entree = Mouvement(
                         date=mouvement.date,
-                        numero_bs_br_cj=f"TRF-{mouvement.numero_bs_br_cj or mouvement.id}",
+                        numero_bs_br_cj='',
                         chantier_id=chantier_beneficiaire_id,
                         stock_id=stock_benef.id,
                         article_id=mouvement.article_id,
@@ -1417,25 +1398,15 @@ def create_app(config_name=None):
                     
                     elif entree > 0:
                         if prix_unitaire <= 0: erreurs.append({'ligne': idx + 1, 'erreur': 'Prix unitaire requis'}); continue
+                        
                         if not stock:
-                            max_fiche = db.session.query(func.max(Stock.numero_fiche)).filter(Stock.chantier_id == chantier_id).scalar() or 0
-                            nouveau_numero = int(max_fiche) + 1
-                            
-                            stock = Stock(
-                                numero_fiche=nouveau_numero,
-                                chantier_id=chantier_id, article_id=article_id,
-                                unite=unite_saisie or article.unite_mesure or 'unité',
-                                quantite_initiale=0, prix_unitaire=prix_unitaire,
-                                statut_validation='Brouillon'
-                            )
-                            db.session.add(stock)
-                            db.session.flush()
-                        else:
-                            if stock.statut_validation == 'Validé':
-                                val_actuelle = float(stock.quantite_finale or 0) * float(article.cout or 0)
-                                val_entree = entree * prix_unitaire
-                                qte_totale = float(stock.quantite_finale or 0) + entree
-                                article.cout = (val_actuelle + val_entree) / qte_totale if qte_totale > 0 else 0
+                            erreurs.append({'ligne': idx + 1, 'erreur': 'Aucune fiche de stock existante pour cet article'}); continue
+                        
+                        if stock.statut_validation == 'Validé':
+                            val_actuelle = float(stock.quantite_finale or 0) * float(article.cout or 0)
+                            val_entree = entree * prix_unitaire
+                            qte_totale = float(stock.quantite_finale or 0) + entree
+                            article.cout = (val_actuelle + val_entree) / qte_totale if qte_totale > 0 else 0
                     
                     mouvement = Mouvement(
                         date=date_obj, numero_bs_br_cj=numero_piece,

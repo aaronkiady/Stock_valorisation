@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Chantier } from '../types';
+import { Chantier, Stock } from '../types';
 import { mouvementsApi, stocksApi, chantiersApi, articlesApi, uploadApi } from '../services/api';
-import { Plus, Trash2, Layers, AlertCircle, FileText, ArrowDownCircle, ArrowUpCircle, X, Save, Calendar, Lock, Loader } from 'lucide-react';
+import { Plus, Trash2, Layers, AlertCircle, FileText, ArrowDownCircle, ArrowUpCircle, X, Save, Calendar, Lock, Info } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import SearchableSelectAPI from './SearchableSelectAPI';
 
@@ -15,6 +15,7 @@ interface LigneMouvement {
   quantite: number;
   prix_unitaire: number;
   unite: string;
+  stock_info?: Stock | null; // ✅ Pour stocker les infos du stock
 }
 
 const MouvementGroupe: React.FC = () => {
@@ -41,7 +42,7 @@ const MouvementGroupe: React.FC = () => {
   const pjInputRef = React.useRef<HTMLInputElement>(null);
 
   const [lignes, setLignes] = useState<LigneMouvement[]>([{
-    id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité'
+    id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité', stock_info: null
   }]);
 
   useEffect(() => { loadChantiers(); }, []);
@@ -61,13 +62,23 @@ const MouvementGroupe: React.FC = () => {
             setCommentaire(first.commentaire || '');
             setFichierPj(first.fichier_pj || undefined);
 
-            const loadedLignes: LigneMouvement[] = mvts.map((m, idx) => ({
-              id: `edit-${idx}-${Date.now()}`,
-              article_id: m.article_id,
-              stock_id: m.stock_id,
-              quantite: m.entree || m.sortie || 0,
-              prix_unitaire: m.prix_unitaire || 0,
-              unite: m.article?.unite_mesure || 'unité'
+            const loadedLignes: LigneMouvement[] = await Promise.all(mvts.map(async (m, idx) => {
+              let stockInfo = null;
+              try {
+                if (first.chantier_id) {
+                  stockInfo = await stocksApi.find(first.chantier_id, m.article_id);
+                }
+              } catch(e) {}
+              
+              return {
+                id: `edit-${idx}-${Date.now()}`,
+                article_id: m.article_id,
+                stock_id: m.stock_id,
+                quantite: m.entree || m.sortie || 0,
+                prix_unitaire: m.prix_unitaire || 0,
+                unite: m.article?.unite_mesure || 'unité',
+                stock_info: stockInfo
+              };
             }));
             setLignes(loadedLignes);
           }
@@ -108,7 +119,7 @@ const MouvementGroupe: React.FC = () => {
   };
 
   const addLigne = () => {
-    setLignes([...lignes, { id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité' }]);
+    setLignes([...lignes, { id: generateId(), quantite: 0, prix_unitaire: 0, unite: 'unité', stock_info: null }]);
   };
 
   const removeLigne = (id: string) => {
@@ -133,6 +144,7 @@ const MouvementGroupe: React.FC = () => {
 
       let stockId: number | undefined = undefined;
       let prixUnitaire: number = 0;
+      let currentStock: Stock | null = null;
 
       if (typeMouvement !== 'ENTREE') {
         let idChantierSource = chantierId;
@@ -150,42 +162,89 @@ const MouvementGroupe: React.FC = () => {
         const stock = await stocksApi.find(idChantierSource!, articleId);
         stockId = stock.id;
         prixUnitaire = stock.article?.cout || 0;
+        currentStock = stock;
+      } else {
+        const stock = await stocksApi.find(chantierId!, articleId);
+        stockId = stock.id;
+        currentStock = stock;
       }
 
       updateLigne(ligneId, { 
         article_id: articleId, 
         unite: uniteArticle,
         stock_id: stockId,
-        prix_unitaire: prixUnitaire
+        prix_unitaire: prixUnitaire,
+        stock_info: currentStock
       });
       
     } catch (err) {
-      updateLigne(ligneId, { article_id: articleId, stock_id: undefined });
-      setError(`Aucun stock validé trouvé pour cet article sur le chantier source (${typeMouvement === 'RESERVATION' ? 'O23005' : 'sélectionné'}).`);
+      updateLigne(ligneId, { article_id: articleId, stock_id: undefined, stock_info: null });
+      setError(`Aucun stock validé trouvé pour cet article sur le chantier source.`);
     }
   };
 
-  // ✅ FILTRAGE DES ARTICLES DÉJÀ SÉLECTIONNÉS
+  // ✅ FILTRAGE : Uniquement les articles avec stock > 0 sur le chantier
   const searchArticles = useCallback(async (searchTerm: string) => {
     try {
-      const data = await articlesApi.getAll({ search: searchTerm, per_page: 50 });
-      const articles = data.articles || data.items || [];
-      
-      // On récupère tous les IDs d'articles déjà utilisés dans les autres lignes
+      // ENTREE : afficher tous les articles
+      if (typeMouvement === 'ENTREE') {
+        const data = await articlesApi.getAll({
+          search: searchTerm,
+          per_page: 50
+        });
+
+        const selectedIds = lignes
+          .map(l => l.article_id)
+          .filter((id): id is number => id !== undefined);
+
+        return (data.articles || [])
+          .filter(a => !selectedIds.includes(a.id))
+          .map(a => ({
+            value: a.id,
+            label: a.nom,
+            sublabel: a.reference_interne
+          }));
+      }
+
+      // SORTIE et RESERVATION : vérifier le stock disponible
+      let idChantierSource = chantierId;
+
+      if (typeMouvement === 'RESERVATION') {
+        const source = chantiers.find(c => c.code === 'O23005');
+
+        if (!source) return [];
+
+        idChantierSource = source.id;
+      }
+
+      if (!idChantierSource) return [];
+
+      const stockData = await stocksApi.getAll({
+        chantier_id: idChantierSource,
+        search: searchTerm,
+        statut_validation: 'Validé',
+        per_page: 50
+      });
+
       const selectedIds = lignes
         .map(l => l.article_id)
         .filter((id): id is number => id !== undefined);
 
-      // On filtre les résultats de l'API pour retirer ceux déjà sélectionnés
-      return articles
-        .filter(article => !selectedIds.includes(article.id))
-        .map(article => ({
-          value: article.id, 
-          label: article.nom, 
-          sublabel: `${article.reference_interne} - CMUP: ${article.cout} MGA`
+      return (stockData.stocks || [])
+        .filter(s =>
+          s.quantite_finale > 0 &&
+          !selectedIds.includes(s.article_id)
+        )
+        .map(s => ({
+          value: s.article_id,
+          label: s.article?.nom || `Article #${s.article_id}`,
+          sublabel: `${s.article?.reference_interne} - Dispo: ${s.quantite_finale} ${s.unite}`
         }));
-    } catch (err) { return []; }
-  }, [lignes]); // ✅ Dépendance à 'lignes' pour que le filtre soit à jour
+
+    } catch (err) {
+      return [];
+    }
+  }, [chantierId, typeMouvement, chantiers, lignes]);
 
   const getArticleLabel = useCallback(async (articleId: number) => {
     try {
@@ -207,7 +266,6 @@ const MouvementGroupe: React.FC = () => {
     if (!numeroPiece.trim()) { setError('N° de pièce (BS/BR/CJ) requis'); return; }
     if (lignes.length === 0) { setError('Ajoutez au moins une ligne'); return; }
 
-    // ✅ VÉRIFICATION SUPPLÉMENTAIRE DES DOUBLONS
     const articleIds = lignes.map(l => l.article_id).filter(id => id !== undefined);
     const hasDoublons = new Set(articleIds).size !== articleIds.length;
     if (hasDoublons) {
@@ -224,6 +282,9 @@ const MouvementGroupe: React.FC = () => {
       }
       if (l.quantite <= 0) { setError(`Ligne ${i + 1} : quantité > 0 requise`); return; }
       if (typeMouvement === 'ENTREE' && l.prix_unitaire <= 0) { setError(`Ligne ${i + 1} : prix unitaire > 0 requis`); return; }
+      if ((typeMouvement === 'SORTIE' || typeMouvement === 'RESERVATION') && l.stock_info && l.quantite > l.stock_info.quantite_finale) {
+         setError(`Ligne ${i + 1} : Stock insuffisant (dispo: ${l.stock_info.quantite_finale})`); return;
+      }
     }
 
     try {
@@ -388,11 +449,19 @@ const MouvementGroupe: React.FC = () => {
                         onChange={(v) => handleArticleChange(ligne.id, v as number)}
                         searchFunction={searchArticles}
                         getSelectedLabel={getArticleLabel}
-                        placeholder="Taper le nom..."
+                        placeholder={chantierId ? "Taper le nom..." : "Sélectionnez d'abord un chantier"}
                         allowEmpty={false}
                         minChars={2}
                         disabled={!chantierId}
                       />
+                      {/* ✅ NOUVEAU : Affichage du stock disponible */}
+                      {ligne.stock_info && typeMouvement !== 'ENTREE' && (
+                        <div className="mt-1 text-xs text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 flex items-center">
+                          <Info size={12} className="mr-1" />
+                          Dispo: <strong className="ml-1">{ligne.stock_info.quantite_finale} {ligne.stock_info.unite}</strong> 
+                          {' | '}CMUP: <strong className="ml-1">{formatPrice(ligne.stock_info.article?.cout || 0)}</strong>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <input type="text" value={ligne.unite} readOnly className="w-full px-2 py-1 border border-gray-200 rounded bg-gray-50 text-gray-700 text-sm" />
