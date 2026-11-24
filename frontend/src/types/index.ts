@@ -1,6 +1,10 @@
 /**
  * Types TypeScript pour l'application de gestion de stock
  */
+import { Role } from '../roles';
+
+// ✅ UserRole est un alias de Role (source unique : roles.ts)
+export type UserRole = Role;
 
 // ==================== TYPES DE BASE ====================
 
@@ -8,9 +12,12 @@ export interface User {
   id: number;
   username: string;
   email: string;
-  role: 'admin' | 'RespStock' | 'user';
   full_name: string;
+  role: UserRole;
+  is_active: boolean;
   created_at?: string;
+  last_login?: string;
+  chantiers?: number[]; // ✅ IDs des chantiers assignés
 }
 
 export interface Article {
@@ -32,6 +39,8 @@ export interface Chantier {
   created_at?: string;
   date_creation?: string;
 }
+
+export type StatutValidation = 'Brouillon' | 'Validé' | 'Annulé';
 
 export interface Stock {
   id: number;
@@ -56,6 +65,8 @@ export interface Stock {
   article?: Article;
 }
 
+export type TypeMouvement = 'ENTREE' | 'SORTIE' | 'RESERVATION';
+
 export interface Mouvement {
   id: number;
   date: string;
@@ -73,8 +84,7 @@ export interface Mouvement {
   utilisateur?: string;
   date_saisie?: string;
   fichier_pj?: string;
-  // ✅ Ajout de 'Annulé'
-  statut_validation: 'Brouillon' | 'Validé' | 'Annulé'; 
+  statut_validation: 'Brouillon' | 'Validé' | 'Annulé';
   date_validation?: string;
   validateur?: User;
   chantier?: Chantier;
@@ -183,14 +193,12 @@ export interface MouvementBatchData {
   numero_bs_br_cj: string;
   fichier_pj?: string;
   commentaire?: string;
-  // ✅ Ajout du type global
-  type_mouvement?: 'ENTREE' | 'SORTIE' | 'RESERVATION'; 
+  type_mouvement?: 'ENTREE' | 'SORTIE' | 'RESERVATION';
   mouvements: {
     stock_id?: number;
     article_id: number;
     chantier_id?: number;
-    // ✅ Ajout de l'unité
-    unite?: string; 
+    unite?: string;
     entree?: number;
     sortie?: number;
     prix_unitaire?: number;

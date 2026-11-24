@@ -1,16 +1,15 @@
 /**
  * Composant Profile - Gestion du compte utilisateur
- * Permet à l'utilisateur de modifier ses informations personnelles
  */
 import React, { useState } from 'react';
 import { User as UserIcon, Mail, Lock, Save, AlertCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { profileApi } from '../services/api';
-import { UserData } from '../services/api';
+import { User } from '../types';
 
 const Profile: React.FC = () => {
   const { user, updateUser } = useAuth();
-  
+
   const [formData, setFormData] = useState({
     username: user?.username || '',
     email: user?.email || '',
@@ -18,7 +17,7 @@ const Profile: React.FC = () => {
     password: '',
     confirm_password: '',
   });
-  
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -40,22 +39,13 @@ const Profile: React.FC = () => {
     setError(null);
     setSuccess(null);
 
-    // Validation côté client
-    if (!formData.username.trim()) {
-      setError('Le nom d\'utilisateur est requis');
-      return;
-    }
-    if (!formData.email.trim()) {
-      setError('L\'email est requis');
-      return;
-    }
+    if (!formData.username.trim()) { setError("Le nom d'utilisateur est requis"); return; }
+    if (!formData.email.trim()) { setError("L'email est requis"); return; }
     if (formData.password && formData.password.length < 6) {
-      setError('Le mot de passe doit contenir au moins 6 caractères');
-      return;
+      setError('Le mot de passe doit contenir au moins 6 caractères'); return;
     }
     if (formData.password !== formData.confirm_password) {
-      setError('Les mots de passe ne correspondent pas');
-      return;
+      setError('Les mots de passe ne correspondent pas'); return;
     }
 
     setLoading(true);
@@ -65,16 +55,11 @@ const Profile: React.FC = () => {
         email: formData.email,
         full_name: formData.full_name,
       };
-      // N'envoyer le mot de passe que s'il est renseigné
-      if (formData.password) {
-        payload.password = formData.password;
-      }
+      if (formData.password) payload.password = formData.password;
 
       const updatedUser = await profileApi.update(payload);
-      
-      // Mettre à jour le contexte global
-      updateUser(updatedUser as any);
-      
+      updateUser(updatedUser as User);
+
       setSuccess('Profil mis à jour avec succès !');
       setFormData(prev => ({ ...prev, password: '', confirm_password: '' }));
       setTimeout(() => setSuccess(null), 4000);
@@ -87,13 +72,11 @@ const Profile: React.FC = () => {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* En-tête */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Mon Compte</h1>
         <p className="text-gray-600 mt-1">Gérez vos informations personnelles</p>
       </div>
 
-      {/* Messages */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-start">
           <AlertCircle className="mr-2 mt-0.5 flex-shrink-0" size={20} />
@@ -107,7 +90,6 @@ const Profile: React.FC = () => {
         </div>
       )}
 
-      {/* Carte d'informations actuelles */}
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Informations actuelles</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -122,57 +104,39 @@ const Profile: React.FC = () => {
         </div>
       </div>
 
-      {/* Formulaire de modification */}
       <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-4">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Modifier mes informations</h2>
 
-        {/* Nom d'utilisateur */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             <UserIcon className="inline mr-1" size={16} />
             Nom d'utilisateur <span className="text-red-500">*</span>
           </label>
           <input
-            type="text"
-            name="username"
-            value={formData.username}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            required
+            type="text" name="username" value={formData.username} onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required
           />
         </div>
 
-        {/* Email */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             <Mail className="inline mr-1" size={16} />
             Email <span className="text-red-500">*</span>
           </label>
           <input
-            type="email"
-            name="email"
-            value={formData.email}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            required
+            type="email" name="email" value={formData.email} onChange={handleChange}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" required
           />
         </div>
 
-        {/* Nom complet */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Nom complet
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Nom complet</label>
           <input
-            type="text"
-            name="full_name"
-            value={formData.full_name}
-            onChange={handleChange}
+            type="text" name="full_name" value={formData.full_name} onChange={handleChange}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        {/* Section mot de passe */}
         <div className="border-t pt-4 mt-4">
           <h3 className="text-md font-semibold text-gray-900 mb-3">
             <Lock className="inline mr-1" size={16} />
@@ -181,30 +145,20 @@ const Profile: React.FC = () => {
           <p className="text-sm text-gray-500 mb-3">
             Laissez vide si vous ne souhaitez pas changer votre mot de passe.
           </p>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Nouveau mot de passe
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nouveau mot de passe</label>
               <input
-                type="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
+                type="password" name="password" value={formData.password} onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Min. 6 caractères"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Confirmer le mot de passe
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirmer le mot de passe</label>
               <input
-                type="password"
-                name="confirm_password"
-                value={formData.confirm_password}
-                onChange={handleChange}
+                type="password" name="confirm_password" value={formData.confirm_password} onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Confirmez le mot de passe"
               />
@@ -212,11 +166,9 @@ const Profile: React.FC = () => {
           </div>
         </div>
 
-        {/* Bouton de soumission */}
         <div className="flex justify-end pt-4 border-t">
           <button
-            type="submit"
-            disabled={loading}
+            type="submit" disabled={loading}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
             <Save size={18} />

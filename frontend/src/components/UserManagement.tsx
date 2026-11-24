@@ -1,64 +1,84 @@
-/**
- * UserManagement - Gestion des utilisateurs (Admin uniquement)
- * Permet de créer, modifier, supprimer et gérer les utilisateurs
- */
-import React, { useState, useEffect } from 'react';
-import { Users, Plus, Edit2, Trash2, Shield, User, AlertCircle, X, Eye, EyeOff, ClipboardList } from 'lucide-react';
-import { Role } from '../roles';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { User, Chantier, UserRole } from '../types';
+import { usersApi, chantiersApi } from '../services/api';
+import { Plus, Trash2, Edit2, AlertCircle, Shield, Building2, User as UserIcon } from 'lucide-react';
 
-interface UserData {
-  id: number;
-  username: string;
-  email: string;
-  full_name: string;
-  role: Role;
-  created_at?: string;
-}
+const ROLES: UserRole[] = ['admin', 'RespStock', 'user', 'magasinier', 'RespChantier'];
+
+const emptyForm = {
+  username: '',
+  email: '',
+  full_name: '',
+  password: '',
+  role: 'user' as UserRole,
+  is_active: true,
+  chantiers: [] as number[],
+};
 
 const UserManagement: React.FC = () => {
-  const [users, setUsers] = useState<UserData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const [formData, setFormData] = useState({
-    username: '',
-    email: '',
-    full_name: '',
-    password: '',
-    role: 'user' as Role
-  });
-
+  const navigate = useNavigate();
+  const [users, setUsers] = useState<User[]>([]);
+  const [chantiers, setChantiers] = useState<Chantier[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [formData, setFormData] = useState(emptyForm);
 
-  const loadUsers = async () => {
+  const fetchUsers = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5880/api/users', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Erreur de chargement des utilisateurs');
-      }
-
-      const data = await response.json();
+      const data = await usersApi.getAll();
       setUsers(data.users || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur de chargement');
+    } catch (e: any) {
+      setError(e?.message || 'Erreur chargement utilisateurs');
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const fetchChantiers = useCallback(async () => {
+    try {
+      const data = await chantiersApi.getAll({ per_page: 1000 });
+      let arr: Chantier[] = [];
+      if (Array.isArray(data)) arr = data;
+      else if (data && typeof data === 'object') arr = (data as any).chantiers || [];
+      setChantiers(arr);
+    } catch (e) {
+      console.error('Erreur chargement chantiers:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+    fetchChantiers();
+  }, [fetchUsers, fetchChantiers]);
+
+  const openCreate = () => {
+    setEditingUser(null);
+    setFormData(emptyForm);
+    setShowModal(true);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const openEdit = (u: User) => {
+    setEditingUser(u);
+    setFormData({
+      username: u.username,
+      email: u.email,
+      full_name: u.full_name,
+      password: '',
+      role: u.role,
+      is_active: u.is_active,
+      chantiers: u.chantiers || [],
+    });
+    setShowModal(true);
+    setError(null);
+    setSuccess(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -66,297 +86,237 @@ const UserManagement: React.FC = () => {
     setError(null);
     setSuccess(null);
 
-    // Validation
-    if (!formData.username.trim()) {
-      setError('Le nom d\'utilisateur est obligatoire');
+    if (!editingUser && !formData.password) {
+      setError('Le mot de passe est requis pour un nouvel utilisateur');
       return;
     }
-
-    if (!formData.email.trim() || !formData.email.includes('@')) {
-      setError('Email valide requis');
-      return;
-    }
-
-    if (!editingId && !formData.password) {
-      setError('Le mot de passe est obligatoire pour un nouvel utilisateur');
-      return;
-    }
-
     if (formData.password && formData.password.length < 6) {
       setError('Le mot de passe doit contenir au moins 6 caractères');
       return;
     }
 
+    if (
+      (formData.role === 'magasinier' || formData.role === 'RespChantier') &&
+      formData.chantiers.length === 0
+    ) {
+      setError(`Le rôle ${formData.role} doit être associé à au moins un chantier.`);
+      return;
+    }
+
     try {
-      const token = localStorage.getItem('token');
-      const url = editingId
-        ? `http://localhost:5880/api/users/${editingId}`
-        : 'http://localhost:5880/api/users';
+      const payload: any = {
+        username: formData.username,
+        email: formData.email,
+        full_name: formData.full_name,
+        role: formData.role,
+        is_active: formData.is_active,
+        chantiers: formData.chantiers,
+      };
+      if (formData.password) payload.password = formData.password;
 
-      const method = editingId ? 'PUT' : 'POST';
-
-      const dataToSend = editingId
-        ? {
-            email: formData.email,
-            full_name: formData.full_name,
-            role: formData.role,
-            ...(formData.password && { password: formData.password })
-          }
-        : formData;
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(dataToSend)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Erreur ${response.status}`);
+      if (editingUser) {
+        await usersApi.update(editingUser.id, payload);
+        setSuccess('Utilisateur mis à jour avec succès');
+      } else {
+        await usersApi.create(payload);
+        setSuccess('Utilisateur créé avec succès');
       }
-
-      setSuccess(editingId ? 'Utilisateur modifié avec succès' : 'Utilisateur créé avec succès');
-      loadUsers();
-      resetForm();
       setShowModal(false);
+      fetchUsers();
       setTimeout(() => setSuccess(null), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur lors de l\'enregistrement');
+    } catch (e: any) {
+      setError(e?.message || 'Erreur');
     }
   };
 
-  const handleEdit = (user: UserData) => {
-    setFormData({
-      username: user.username,
-      email: user.email,
-      full_name: user.full_name,
-      password: '',
-      role: user.role as Role
-    });
-    setEditingId(user.id);
-    setShowModal(true);
+  const handleDelete = async (u: User) => {
+    if (!window.confirm(`Supprimer l'utilisateur ${u.username} ?`)) return;
     setError(null);
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!window.confirm('Êtes-vous sûr de vouloir supprimer cet utilisateur ?')) return;
-
+    setSuccess(null);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:5880/api/users/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erreur lors de la suppression');
-      }
-
+      await usersApi.delete(u.id);
       setSuccess('Utilisateur supprimé avec succès');
-      loadUsers();
+      fetchUsers();
       setTimeout(() => setSuccess(null), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur lors de la suppression');
+    } catch (e: any) {
+      setError(e?.message || 'Erreur');
     }
   };
 
-  const resetForm = () => {
-    setFormData({
-      username: '',
-      email: '',
-      full_name: '',
-      password: '',
-      role: 'user'
-    });
-    setEditingId(null);
-    setError(null);
-    setShowPassword(false);
+  const toggleChantier = (id: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      chantiers: prev.chantiers.includes(id)
+        ? prev.chantiers.filter((c) => c !== id)
+        : [...prev.chantiers, id],
+    }));
   };
 
-  const handleOpenModal = () => {
-    resetForm();
-    setShowModal(true);
+  const roleColor = (role: UserRole) => {
+    switch (role) {
+      case 'admin':
+        return 'bg-red-100 text-red-800';
+      case 'RespStock':
+        return 'bg-purple-100 text-purple-800';
+      case 'RespChantier':
+        return 'bg-blue-100 text-blue-800';
+      case 'magasinier':
+        return 'bg-orange-100 text-orange-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-xl text-gray-600">Chargement...</div>
-      </div>
-    );
-  }
 
   return (
     <div className="p-6">
-      {/* En-tête */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-            <Users className="mr-3" size={32} />
-            Gestion des Utilisateurs
+            <UserIcon className="mr-2" size={28} />
+            Gestion des utilisateurs
           </h1>
-          <p className="text-gray-600 mt-1">{users.length} utilisateurs enregistrés</p>
+          <p className="text-gray-600 mt-1">Rôles et chantiers autorisés</p>
         </div>
-        <button
-          onClick={handleOpenModal}
-          className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 flex items-center space-x-2 transition-colors"
-        >
-          <Plus size={20} />
-          <span>Nouvel Utilisateur</span>
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Retour
+          </button>
+          <button
+            onClick={openCreate}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+          >
+            <Plus size={18} />
+            <span>Nouvel utilisateur</span>
+          </button>
+        </div>
       </div>
 
-      {/* Messages */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex items-start">
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-start">
           <AlertCircle className="mr-2 mt-0.5 flex-shrink-0" size={20} />
-          <p>{error}</p>
+          <span>{error}</span>
         </div>
       )}
-
       {success && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-lg">
+        <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">
           ✓ {success}
         </div>
       )}
 
-      {/* Tableau des utilisateurs */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Utilisateur
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Email
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Nom Complet
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Rôle
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Date de Création
-              </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {users.length === 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                  <Users className="mx-auto mb-2 text-gray-400" size={48} />
-                  <p>Aucun utilisateur trouvé</p>
-                </td>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Utilisateur</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nom complet</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rôle</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Chantiers</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actif</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
-            ) : (
-              users.map((user) => (
-                <tr key={user.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0 h-10 w-10">
-                        <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
-                          <User className="text-purple-600" size={20} />
-                        </div>
-                      </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{user.username}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-700">{user.email}</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-700">{user.full_name}</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        user.role === 'admin'
-                          ? 'bg-purple-100 text-purple-800'
-                          : user.role === 'RespStock'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}
-                    >
-                      {user.role === 'admin' ? (
-                        <><Shield size={14} className="mr-1" /> Administrateur</>
-                      ) : user.role === 'RespStock' ? (
-                        <><ClipboardList size={14} className="mr-1" /> Resp. Stock</>
-                      ) : (
-                        <><User size={14} className="mr-1" /> Utilisateur</>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {user.created_at
-                      ? new Date(user.created_at).toLocaleDateString('fr-FR')
-                      : '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                    <button
-                      onClick={() => handleEdit(user)}
-                      className="text-blue-600 hover:text-blue-900 inline-flex items-center"
-                      title="Modifier"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(user.id)}
-                      className="text-red-600 hover:text-red-900 inline-flex items-center"
-                      title="Supprimer"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {loading && (
+                <tr>
+                  <td colSpan={7} className="px-6 py-6 text-center text-gray-500">
+                    Chargement...
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              )}
+              {!loading && users.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-6 py-6 text-center text-gray-500">
+                    Aucun utilisateur
+                  </td>
+                </tr>
+              )}
+              {!loading &&
+                users.map((u) => (
+                  <tr key={u.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {u.username}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{u.email}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{u.full_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${roleColor(u.role)}`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-xs text-gray-700">
+                      {(u.chantiers || []).length === 0 ? (
+                        <span className="text-gray-400">—</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {(u.chantiers || []).map((id) => {
+                            const c = chantiers.find((x) => x.id === id);
+                            return (
+                              <span
+                                key={id}
+                                className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-700"
+                              >
+                                <Building2 size={12} className="mr-1" />
+                                {c?.code || `#${id}`}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {u.is_active ? (
+                        <span className="text-green-600">Oui</span>
+                      ) : (
+                        <span className="text-red-600">Non</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => openEdit(u)}
+                          className="text-blue-600 hover:text-blue-900"
+                          title="Éditer"
+                        >
+                          <Edit2 size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(u)}
+                          className="text-red-600 hover:text-red-900"
+                          title="Supprimer"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Modal Formulaire */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b">
               <h2 className="text-xl font-bold flex items-center">
-                <Users className="mr-2" size={24} />
-                {editingId ? 'Modifier l\'Utilisateur' : 'Nouvel Utilisateur'}
+                <Shield className="mr-2" size={20} />
+                {editingUser ? 'Éditer utilisateur' : 'Nouvel utilisateur'}
               </h2>
               <button
-                onClick={() => {
-                  setShowModal(false);
-                  resetForm();
-                }}
+                onClick={() => setShowModal(false)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <X size={24} />
+                <span className="text-2xl">&times;</span>
               </button>
             </div>
 
-            {/* Formulaire */}
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              {error && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded flex items-start">
-                  <AlertCircle className="mr-2 flex-shrink-0 mt-0.5" size={18} />
-                  <p className="text-sm">{error}</p>
-                </div>
-              )}
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Nom d'utilisateur <span className="text-red-500">*</span>
@@ -366,13 +326,9 @@ const UserManagement: React.FC = () => {
                   required
                   value={formData.username}
                   onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  placeholder="Ex: jdupont"
-                  disabled={editingId !== null}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                  disabled={!!editingUser}
                 />
-                {editingId && (
-                  <p className="mt-1 text-xs text-gray-500">Le nom d'utilisateur ne peut pas être modifié</p>
-                )}
               </div>
 
               <div>
@@ -384,88 +340,116 @@ const UserManagement: React.FC = () => {
                   required
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="Ex: jean.dupont@example.com"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nom Complet
+                  Nom complet <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
+                  required
                   value={formData.full_name}
                   onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  placeholder="Ex: Jean Dupont"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Mot de passe {!editingId && <span className="text-red-500">*</span>}
-                  {editingId && <span className="text-gray-500 text-xs">(Laisser vide pour ne pas modifier)</span>}
+                  Mot de passe {!editingUser && <span className="text-red-500">*</span>}
                 </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required={!editingId}
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-gray-500">Minimum 6 caractères</p>
+                <input
+                  type="password"
+                  placeholder={
+                    editingUser
+                      ? 'Laisser vide pour conserver le mot de passe actuel'
+                      : 'Minimum 6 caractères'
+                  }
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required={!editingUser}
+                />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Rôle
+                  Rôle <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as Role })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="user">Utilisateur (Mouvements uniquement)</option>
-                  <option value="RespStock">Responsable Stock</option>
-                  <option value="admin">Administrateur</option>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">
-                  {formData.role === 'admin'
-                    ? 'Accès complet à toutes les fonctionnalités'
-                    : formData.role === 'RespStock'
-                    ? 'Tous les menus sauf Utilisateurs et Historique'
-                    : 'Accès limité au menu Mouvements'}
-                </p>
               </div>
 
-              {/* Boutons */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="is_active"
+                  checked={formData.is_active}
+                  onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <label htmlFor="is_active" className="text-sm text-gray-700">
+                  Compte actif
+                </label>
+              </div>
+
+              {(formData.role === 'magasinier' || formData.role === 'RespChantier') && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Chantiers autorisés <span className="text-red-500">*</span>
+                  </label>
+                  <div className="border border-gray-300 rounded-lg p-2 max-h-48 overflow-y-auto space-y-1">
+                    {chantiers.length === 0 && (
+                      <p className="text-gray-400 text-xs p-2">Aucun chantier disponible</p>
+                    )}
+                    {chantiers.map((c) => (
+                      <label
+                        key={c.id}
+                        className="flex items-center gap-2 p-1 hover:bg-gray-50 rounded cursor-pointer text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.chantiers.includes(c.id)}
+                          onChange={() => toggleChantier(c.id)}
+                          className="h-4 w-4"
+                        />
+                        <Building2 size={14} className="text-gray-500" />
+                        <span className="font-medium">{c.code}</span>
+                        <span className="text-gray-600">— {c.nom}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {formData.chantiers.length} chantier(s) sélectionné(s)
+                  </p>
+                </div>
+              )}
+
               <div className="flex justify-end space-x-3 pt-4 border-t">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowModal(false);
-                    resetForm();
-                  }}
-                  className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  onClick={() => setShowModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
-                  {editingId ? 'Mettre à jour' : 'Créer'}
+                  {editingUser ? 'Enregistrer' : 'Créer'}
                 </button>
               </div>
             </form>

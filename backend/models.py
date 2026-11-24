@@ -1,7 +1,6 @@
 """
 Modèles de données pour l'application de gestion de stock - VERSION MYSQL
 ===========================================================================
-Modèles adaptés pour MySQL avec optimisations et bonnes pratiques
 """
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
@@ -13,11 +12,10 @@ db = SQLAlchemy()
 
 
 # ==================================================================
-# MODÈLE USER - GESTION DES UTILISATEURS
+# MODÈLE USER
 # ==================================================================
 
 class User(db.Model):
-    """Modèle pour les utilisateurs de l'application"""
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -25,22 +23,23 @@ class User(db.Model):
     password = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(100), unique=True, nullable=False, index=True)
     full_name = db.Column(db.String(100), nullable=False)
-    role = db.Column(db.String(20), nullable=False, default='user')
+    # ✅ AJOUT DES NOUVEAUX RÔLES
+    role = db.Column(db.String(20), nullable=False, default='user')  # admin | RespStock | user | magasinier | RespChantier
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = db.Column(db.DateTime, nullable=True)
     
+    # ✅ Relation avec les chantiers
+    chantiers = db.relationship('UserChantier', back_populates='user', lazy='dynamic')
+    
     def set_password(self, password):
-        """Hasher le mot de passe"""
         self.password = generate_password_hash(password)
     
     def check_password(self, password):
-        """Vérifier le mot de passe"""
         return check_password_hash(self.password, password)
     
     def to_dict(self):
-        """Convertir en dictionnaire (sans le mot de passe)"""
         return {
             'id': self.id,
             'username': self.username,
@@ -49,8 +48,29 @@ class User(db.Model):
             'role': self.role,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'last_login': self.last_login.isoformat() if self.last_login else None
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'chantiers': [uc.chantier_id for uc in self.chantiers.all()] # ✅ Liste des IDs de chantiers
         }
+
+
+# ==================================================================
+# MODÈLE USER_CHANTIER (Liaison)
+# ==================================================================
+
+class UserChantier(db.Model):
+    __tablename__ = 'user_chantiers'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    chantier_id = db.Column(db.Integer, db.ForeignKey('chantiers.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    user = db.relationship('User', back_populates='chantiers')
+    chantier = db.relationship('Chantier', backref='users_assigned')
+    
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'chantier_id', name='uq_user_chantier'),
+    )
 
 
 # ==================================================================
@@ -58,7 +78,6 @@ class User(db.Model):
 # ==================================================================
 
 class Article(db.Model):
-    """Modèle pour le référentiel des articles avec prix"""
     __tablename__ = 'articles'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -74,13 +93,11 @@ class Article(db.Model):
     mouvements = db.relationship('Mouvement', back_populates='article', lazy='dynamic')
     
     def recalculer_cmup(self):
-        """Calcule le Coût Moyen Unitaire Pondéré (CMUP)"""
         stocks = Stock.query.filter_by(article_id=self.id).all()
         
         qte_initiale_totale = sum(float(s.quantite_initiale or 0) for s in stocks)
         valeur_initiale_totale = sum(float(s.quantite_initiale or 0) * float(s.prix_unitaire or 0) for s in stocks)
         
-        # On ne prend en compte que les mouvements VALIDÉS
         mouvements_entree = Mouvement.query.filter(
             Mouvement.article_id == self.id,
             Mouvement.entree > 0,
@@ -116,7 +133,6 @@ class Article(db.Model):
 # ==================================================================
 
 class Chantier(db.Model):
-    """Modèle pour les chantiers"""
     __tablename__ = 'chantiers'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -147,18 +163,16 @@ class Chantier(db.Model):
 # ==================================================================
 
 class Stock(db.Model):
-    """Modèle pour l'état du stock"""
     __tablename__ = 'stocks'
     
     id = db.Column(db.Integer, primary_key=True)
-    numero_fiche = db.Column(db.Integer, nullable=False, index=True)
+    numero_fiche = db.Column(db.Integer, nullable=False, index=True) 
     reference_odoo = db.Column(db.String(50), index=True)
     chantier_id = db.Column(db.Integer, db.ForeignKey('chantiers.id'), nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=False, index=True)
     unite = db.Column(db.String(50))
     quantite_initiale = db.Column(db.Numeric(12, 2), default=0.0)
     
-    # Champs calculés
     entree = db.Column(db.Numeric(12, 2), default=0.0)
     sortie = db.Column(db.Numeric(12, 2), default=0.0)
     quantite_finale = db.Column(db.Numeric(12, 2), default=0.0)
@@ -166,29 +180,26 @@ class Stock(db.Model):
     prix_total = db.Column(db.Numeric(15, 2), default=0.0)
     statut = db.Column(db.String(50), default='Stock Normal')
     
-    # ✅ NOUVEAUX CHAMPS (cahier des charges)
     date_inventaire = db.Column(db.Date, nullable=True)
     reference_document = db.Column(db.String(100), nullable=True)
     fichier_pj = db.Column(db.String(255), nullable=True)
-    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)  # Brouillon | Validé
+    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)
     validateur_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     date_validation = db.Column(db.DateTime, nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    __table_args__ = (
-        db.UniqueConstraint('chantier_id', 'numero_fiche', name='uq_chantier_numero_fiche'),
-    )
     
-    # Relations
     chantier = db.relationship('Chantier', back_populates='stocks')
     article = db.relationship('Article', back_populates='stocks')
     mouvements = db.relationship('Mouvement', back_populates='stock', lazy='dynamic')
     validateur = db.relationship('User', foreign_keys=[validateur_id])
     
+    __table_args__ = (
+        db.UniqueConstraint('chantier_id', 'numero_fiche', name='uq_chantier_numero_fiche'),
+    )
+
     def recalculer_stock(self):
-        """Recalculer les totaux du stock (quantités) - UNIQUEMENT mouvements validés"""
         total_entrees = db.session.query(
             func.coalesce(func.sum(Mouvement.entree), 0)
         ).filter(
@@ -220,7 +231,6 @@ class Stock(db.Model):
         self.updated_at = datetime.utcnow()
 
     def recalculer_prix_stock(self):
-        """Recalcule le prix total du stock - UNIQUEMENT mouvements validés"""
         if not self.article:
             return
 
@@ -284,11 +294,10 @@ class Stock(db.Model):
 # ==================================================================
 
 class Mouvement(db.Model):
-    """Modèle pour l'historique des mouvements de stock"""
     __tablename__ = 'mouvements'
     
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.Date, nullable=False, index=True)  # Date du mouvement
+    date = db.Column(db.Date, nullable=False, index=True)
     numero_bs_br_cj = db.Column(db.String(100))
     chantier_id = db.Column(db.Integer, db.ForeignKey('chantiers.id'), index=True)
     stock_id = db.Column(db.Integer, db.ForeignKey('stocks.id'), nullable=False, index=True)
@@ -300,16 +309,14 @@ class Mouvement(db.Model):
     utilisateur = db.Column(db.String(100))
     commentaire = db.Column(db.Text)
     
-    # ✅ NOUVEAUX CHAMPS (cahier des charges)
-    date_saisie = db.Column(db.DateTime, default=datetime.utcnow, index=True)  # Date de saisie
+    date_saisie = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     fichier_pj = db.Column(db.String(255), nullable=True)
-    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)  # Brouillon | Validé
+    statut_validation = db.Column(db.String(20), default='Brouillon', index=True)
     validateur_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     date_validation = db.Column(db.DateTime, nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # Relations
     stock = db.relationship('Stock', back_populates='mouvements')
     article = db.relationship('Article', back_populates='mouvements')
     chantier = db.relationship('Chantier', back_populates='mouvements')
@@ -326,7 +333,6 @@ class Mouvement(db.Model):
             'date': self.date.isoformat() if self.date else None,
             'date_saisie': self.date_saisie.isoformat() if self.date_saisie else None,
             'numero_bs_br_cj': self.numero_bs_br_cj,
-            'reference_document': self.stock.reference_document if self.stock else None,
             'chantier_id': self.chantier_id,
             'stock_id': self.stock_id,
             'article_id': self.article_id,
@@ -360,7 +366,6 @@ class Mouvement(db.Model):
 # ==================================================================
 
 class AuditLog(db.Model):
-    """Modèle pour le journal d'audit"""
     __tablename__ = 'audit_logs'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -392,7 +397,6 @@ class AuditLog(db.Model):
 # ==================================================================
 
 def log_audit(utilisateur, action, table_name, record_id, old_values=None, new_values=None, ip_address=None):
-    """Créer une entrée dans le journal d'audit"""
     try:
         audit = AuditLog(
             utilisateur=utilisateur,
@@ -411,7 +415,6 @@ def log_audit(utilisateur, action, table_name, record_id, old_values=None, new_v
 
 
 def get_stock_statistics():
-    """Récupérer les statistiques des stocks"""
     try:
         result = db.session.execute(text("""
             SELECT 
@@ -441,7 +444,6 @@ def get_stock_statistics():
 
 
 def get_mouvement_statistics():
-    """Récupérer les statistiques des mouvements"""
     try:
         result = db.session.execute(text("""
             SELECT 

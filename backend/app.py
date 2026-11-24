@@ -10,7 +10,10 @@ import io
 import csv
 import jwt
 import os
-from models import db
+from models import (
+    db, Article, Chantier, Stock, Mouvement, AuditLog, User, UserChantier,
+    log_audit, get_stock_statistics, get_mouvement_statistics
+)
 
 try:
     import openpyxl
@@ -133,8 +136,8 @@ def build_mouvements_query(search='', chantier_id=None, date_debut='', date_fin=
     
     return query.order_by(Mouvement.date.desc(), Mouvement.id.desc())
 
-VALID_ROLES = ('admin', 'RespStock', 'user')
-VALIDATEURS = ('admin', 'RespStock')
+VALID_ROLES = ('admin', 'RespStock', 'user', 'magasinier', 'RespChantier')
+VALIDATEURS = ('admin', 'RespStock', 'RespChantier')
 
 def parse_import_csv(raw_bytes):
     try: text = raw_bytes.decode('utf-8-sig')
@@ -195,6 +198,27 @@ def create_app(config_name=None):
     def get_current_user():
         if hasattr(request, 'current_user'): return request.current_user.username
         return request.headers.get('X-User', 'Système')
+
+    def get_current_user_obj():
+        if hasattr(request, 'current_user'): return request.current_user
+        return None
+
+    def check_chantier_access(chantier_id):
+        user = get_current_user_obj()
+        if not user: return False
+        # Admin et RespStock ont accès à tout
+        if user.role in ('admin', 'RespStock'): return True
+        
+        # Vérifier si le chantier est dans la liste des chantiers autorisés
+        if not user.chantiers: return False
+        assigned_chantier_ids = [uc.chantier_id for uc in user.chantiers.all()]
+        return int(chantier_id) in assigned_chantier_ids
+
+    def get_chantiers_autorises():
+        user = get_current_user_obj()
+        if not user: return []
+        if user.role in ('admin', 'RespStock'): return None  # None = tous
+        return [uc.chantier_id for uc in user.chantiers.all()]
 
     def get_client_ip():
         if request.headers.get('X-Forwarded-For'): return request.headers.get('X-Forwarded-For').split(',')[0]
@@ -470,6 +494,11 @@ def create_app(config_name=None):
             per_page = request.args.get('per_page', 50, type=int)
             search = request.args.get('search', '').strip()
             query = Chantier.query
+
+            autorises = get_chantiers_autorises()
+            if autorises is not None:
+                query = query.filter(Chantier.id.in_(autorises))
+
             if search:
                 search_term = f'%{search}%'
                 query = query.filter(db.or_(
@@ -563,6 +592,10 @@ def create_app(config_name=None):
 
             query = build_stocks_query(search, chantier_id, statut_validation, date_debut, date_fin)
             
+            autorises = get_chantiers_autorises()
+            if autorises is not None:
+                query = query.filter(Stock.chantier_id.in_(autorises))
+
             paginated = query.paginate(page=page, per_page=per_page, error_out=False)
             return jsonify({
                 'stocks': [s.to_dict() for s in paginated.items],
@@ -605,7 +638,7 @@ def create_app(config_name=None):
             return jsonify({'error': str(e)}), 500
     
     @app.route('/api/stocks', methods=['POST'])
-    @roles_required('admin', 'RespStock', 'user')
+    @roles_required('admin', 'RespStock', 'magasinier', 'user')
     def create_stock():
         try:
             data = request.json
@@ -613,6 +646,8 @@ def create_app(config_name=None):
             
             if not data.get('chantier_id'): return jsonify({'error': 'Chantier requis'}), 400
             if not data.get('article_id'): return jsonify({'error': 'Article requis'}), 400
+            if not check_chantier_access(data['chantier_id']):
+                return jsonify({'error': 'Vous n\'avez pas accès à ce chantier'}), 403
             
             chantier = db.session.get(Chantier, data['chantier_id'])
             if not chantier: return jsonify({'error': 'Chantier introuvable'}), 404
@@ -821,6 +856,10 @@ def create_app(config_name=None):
             statut_validation = request.args.get('statut_validation', '')
             
             query = build_mouvements_query(search, chantier_id, date_debut, date_fin, type_mouvement, statut_validation)
+
+            autorises = get_chantiers_autorises()
+            if autorises is not None:
+                query = query.filter(Mouvement.chantier_id.in_(autorises))
             
             paginated = query.paginate(page=page, per_page=per_page, error_out=False)
             
@@ -856,6 +895,8 @@ def create_app(config_name=None):
             data = request.json
             if not data.get('date'): return jsonify({'error': 'Date requise'}), 400
             if not data.get('article_id'): return jsonify({'error': 'Article requis'}), 400
+            if data.get('chantier_id') and not check_chantier_access(data['chantier_id']):
+                return jsonify({'error': 'Vous n\'avez pas accès à ce chantier'}), 403
             
             type_mouvement_saisi = data.get('type_mouvement', 'ENTREE')
             entree = float(data.get('entree', 0))
@@ -1082,6 +1123,8 @@ def create_app(config_name=None):
             if not mouvement: return jsonify({'error': 'Mouvement introuvable'}), 404
             if mouvement.statut_validation == 'Validé': return jsonify({'error': 'Déjà validé'}), 400
             if mouvement.statut_validation == 'Annulé': return jsonify({'error': 'Ce mouvement est annulé, impossible de le valider'}), 400
+            if not check_chantier_access(mouvement.chantier_id):
+                return jsonify({'error': 'Vous n\'avez pas accès à ce chantier'}), 403
             
             if mouvement.type_mouvement == 'RESERVATION':
                 chantier_beneficiaire_id = mouvement.chantier_id
@@ -1197,6 +1240,14 @@ def create_app(config_name=None):
 
             mouvements = Mouvement.query.filter_by(numero_bs_br_cj=numero_piece, statut_validation='Brouillon').all()
             if not mouvements: return jsonify({'error': 'Aucun mouvement en brouillon trouvé pour cette pièce'}), 404
+
+            # ✅ Vérifier l'accès à tous les chantiers concernés (sauf admin/RespStock)
+            user = get_current_user_obj()
+            if user and user.role not in ('admin', 'RespStock'):
+                chantiers_mvts = {m.chantier_id for m in mouvements}
+                autorises = set(get_chantiers_autorises() or [])
+                if not chantiers_mvts.issubset(autorises):
+                    return jsonify({'error': 'Vous n\'avez pas accès à tous les chantiers de cette pièce'}), 403
 
             for mouvement in mouvements:
                 if mouvement.type_mouvement == 'RESERVATION':
@@ -1340,6 +1391,10 @@ def create_app(config_name=None):
 
                     if not chantier_id or not article_id:
                         erreurs.append({'ligne': idx + 1, 'erreur': 'chantier_id et article_id requis'}); continue
+
+                    if not check_chantier_access(mvt.get('chantier_id')):
+                        erreurs.append({'ligne': idx + 1, 'erreur': 'Vous n\'avez pas accès à ce chantier'})
+                        continue
                     
                     entree = float(mvt.get('entree', 0))
                     sortie = float(mvt.get('sortie', 0))
@@ -1656,6 +1711,11 @@ def create_app(config_name=None):
             if existing: return jsonify({'error': 'Nom d\'utilisateur ou email déjà utilisé'}), 400
             user = User(username=data['username'], email=data['email'], password=generate_password_hash(data['password']), full_name=data.get('full_name', ''), role=role)
             db.session.add(user)
+            db.session.flush()
+            if data.get('chantiers') and isinstance(data['chantiers'], list):
+                for chantier_id in data['chantiers']:
+                    if db.session.get(Chantier, chantier_id):
+                        db.session.add(UserChantier(user_id=user.id, chantier_id=chantier_id))
             db.session.commit()
             log_audit(get_current_user(), 'CREATE', 'users', user.id, new_values={'username': user.username, 'email': user.email, 'role': user.role}, ip_address=get_client_ip())
             db.session.commit()
@@ -1685,6 +1745,12 @@ def create_app(config_name=None):
             if data.get('password'):
                 if len(data['password']) < 6: return jsonify({'error': 'Le mot de passe doit contenir au moins 6 caractères'}), 400
                 user.password = generate_password_hash(data['password'])
+
+            if 'chantiers' in data and isinstance(data['chantiers'], list):
+                UserChantier.query.filter_by(user_id=user.id).delete()
+                for chantier_id in data['chantiers']:
+                    if db.session.get(Chantier, chantier_id):
+                        db.session.add(UserChantier(user_id=user.id, chantier_id=chantier_id))
             db.session.commit()
             log_audit(get_current_user(), 'UPDATE', 'users', user.id, old_values=old_values, new_values=user.to_dict(), ip_address=get_client_ip())
             db.session.commit()

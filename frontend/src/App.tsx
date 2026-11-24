@@ -13,9 +13,9 @@ import ChantierManagement from './components/ChantierManagement';
 import UserManagement from './components/UserManagement';
 import Profile from './components/Profile';
 import ValorisationMensuelle from './components/ValorisationMensuelle';
-import CoutsChantiers from './components/CoutsChantiers'; // ✅ NOUVEAU
+import CoutsChantiers from './components/CoutsChantiers';
 import { canAccessMenu, defaultPathForRole, MenuId } from './roles';
-import { 
+import {
   LayoutDashboard, Package, TrendingUp, Menu, X, History, LogOut, Box, Building2, Users, BarChart3, DollarSign
 } from 'lucide-react';
 
@@ -29,7 +29,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { id: 'stock', name: 'Gestion du Stock', icon: Package, path: '/stock' },
     { id: 'mouvements', name: 'Mouvements', icon: TrendingUp, path: '/mouvements' },
     { id: 'valorisation', name: 'Valorisation', icon: BarChart3, path: '/valorisation' },
-    { id: 'couts', name: 'Coût par Chantier', icon: DollarSign, path: '/couts' }, // ✅ NOUVEAU
+    { id: 'couts', name: 'Coût par Chantier', icon: DollarSign, path: '/couts' },
     { id: 'articles', name: 'Articles', icon: Box, path: '/articles' },
     { id: 'chantiers', name: 'Chantiers', icon: Building2, path: '/chantiers' },
     { id: 'users', name: 'Utilisateurs', icon: Users, path: '/users' },
@@ -101,20 +101,38 @@ const App: React.FC = () => {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+
+          {/* Dashboard : admin, RespStock uniquement */}
           <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><Dashboard /></Layout></ProtectedRoute>} />
-          <Route path="/stock" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><StockManagement /></Layout></ProtectedRoute>} />
-          <Route path="/mouvements" element={<ProtectedRoute allowedRoles={['admin', 'RespStock', 'user']}><Layout><Mouvements /></Layout></ProtectedRoute>} />
-          <Route path="/mouvements/nouveau" element={<ProtectedRoute allowedRoles={['admin', 'RespStock', 'user']}><Layout><MouvementGroupe /></Layout></ProtectedRoute>} />
-          
+
+          {/* Stock : admin, RespStock, magasinier, RespChantier, user */}
+          <Route path="/stock" element={<ProtectedRoute allowedRoles={['admin', 'RespStock', 'magasinier', 'RespChantier', 'user']}><Layout><StockManagement /></Layout></ProtectedRoute>} />
+
+          {/* Mouvements : tous les rôles authentifiés */}
+          <Route path="/mouvements" element={<ProtectedRoute allowedRoles={['admin', 'RespStock', 'user', 'magasinier', 'RespChantier']}><Layout><Mouvements /></Layout></ProtectedRoute>} />
+          <Route path="/mouvements/nouveau" element={<ProtectedRoute allowedRoles={['admin', 'RespStock', 'user', 'magasinier', 'RespChantier']}><Layout><MouvementGroupe /></Layout></ProtectedRoute>} />
+
+          {/* Valorisation : admin, RespStock */}
           <Route path="/valorisation" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><ValorisationMensuelle /></Layout></ProtectedRoute>} />
-          {/* ✅ NOUVELLE ROUTE */}
+
+          {/* Coûts par chantier : admin, RespStock */}
           <Route path="/couts" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><CoutsChantiers /></Layout></ProtectedRoute>} />
-          
+
+          {/* Articles : admin, RespStock */}
           <Route path="/articles" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><ArticleManagement /></Layout></ProtectedRoute>} />
+
+          {/* Chantiers : admin, RespStock */}
           <Route path="/chantiers" element={<ProtectedRoute allowedRoles={['admin', 'RespStock']}><Layout><ChantierManagement /></Layout></ProtectedRoute>} />
+
+          {/* Utilisateurs : admin uniquement */}
           <Route path="/users" element={<ProtectedRoute allowedRoles={['admin']}><Layout><UserManagement /></Layout></ProtectedRoute>} />
+
+          {/* Audit : admin uniquement */}
           <Route path="/audit-log" element={<ProtectedRoute allowedRoles={['admin']}><Layout><AuditLog /></Layout></ProtectedRoute>} />
+
+          {/* Profil : tous authentifiés */}
           <Route path="/profile" element={<ProtectedRoute><Layout><Profile /></Layout></ProtectedRoute>} />
+
           <Route path="/" element={<HomeRedirect />} />
           <Route path="*" element={<HomeRedirect />} />
         </Routes>
